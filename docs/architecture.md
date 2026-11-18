@@ -39,9 +39,8 @@ model) and instead built out the data lifecycle around the core loop:
   packages), plus an urgency shortcut for `'impassable'` severity.
 
 See `docs/roadmap.md`'s "Done (V2)" section for exactly what each of these
-does and doesn't yet handle, and `docs/BUGS.md` for how they were verified
-(by hand — the test suite has still never actually been run; see the note
-at the end of this document).
+does and doesn't yet handle, `docs/BUGS.md` for bugs found and fixed, and
+`docs/SECURITY.md` for how untrusted input and images are handled.
 
 ## Repo layout
 
@@ -165,12 +164,8 @@ against something concrete.
 
 ## A note on verification
 
-This repo has been built across two sessions in a sandbox whose shell was
-unavailable both times — `npm install` and the test suites have **never
-actually been executed**. Every piece of logic described above was instead
-verified by hand: tracing code paths, working out the cosine-similarity and
-corroboration-threshold math by hand, and checking Jest's per-test-file
-module isolation assumptions. That caught one real bug in V1 (see
-`docs/BUGS.md`, BUG-001) and no new ones in V2's review pass, but hand review
-is not a substitute for actually running the suite. Do that first, in any
-environment where it's possible, before building further on top of this.
+V1 and V2 were built in a sandbox with no shell and verified by hand. On
+2026-11-18 the suite was run for the first time: install and typecheck were
+clean and 54/55 tests passed (the failure was BUG-004). A security review
+then found and fixed BUG-005 to BUG-016. `npm run check` (typecheck + all
+tests) now runs locally and in CI on every push.

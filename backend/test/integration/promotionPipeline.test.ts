@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../../src/app';
+import { makeImageBase64 } from '../helpers/images';
 import { SHADOW_CREEK_TRAIL_ID } from '../../src/data/fixtures';
 import { _resetForTests as resetContributions, listPendingForTrail } from '../../src/services/contributionService';
 import { _resetForTests as resetLandmarkPhotos } from '../../src/services/landmarkPhotoService';
@@ -10,20 +11,30 @@ import { _resetForTests as resetLandmarkPhotos } from '../../src/services/landma
  * corroborate the same spot, or get promoted/rejected by a human reviewer.
  * Either way, nothing ships in a trip package until promotion happens.
  */
+const REVIEWER_TOKEN = 'test-reviewer-token-0123456789abcdef0123456789';
+
 describe('Use case: crowdsourced photos get promoted into the official dataset', () => {
-  const app = createApp();
+  const app = createApp({ writeRateLimit: false });
+  const auth = { Authorization: `Bearer ${REVIEWER_TOKEN}` };
+
+  beforeAll(() => {
+    process.env.OFFGRID_REVIEWER_TOKEN = REVIEWER_TOKEN;
+  });
+  afterAll(() => {
+    delete process.env.OFFGRID_REVIEWER_TOKEN;
+  });
 
   beforeEach(() => {
     resetContributions();
     resetLandmarkPhotos();
   });
 
-  // Must pass the real image-signature check in
-  // backend/src/validation/imageValidation.ts (added after this test was
-  // first written) — a JPEG magic-byte prefix plus arbitrary payload bytes.
-  const validImageBase64 = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(16, 1)]).toString(
-    'base64',
-  );
+  // Must be a real, decodable image: the upload pipeline decodes and
+  // re-encodes every photo (see test/helpers/images.ts).
+  let validImageBase64: string;
+  beforeAll(async () => {
+    validImageBase64 = await makeImageBase64();
+  });
 
   const contribute = (contributorId: string, overrides: Partial<Record<string, unknown>> = {}) =>
     request(app)
@@ -72,7 +83,7 @@ describe('Use case: crowdsourced photos get promoted into the official dataset',
     const submitRes = await contribute('hiker-1');
     const contributionId = submitRes.body.id;
 
-    const promoteRes = await request(app).post(`/contributions/${contributionId}/promote`).send({});
+    const promoteRes = await request(app).post(`/contributions/${contributionId}/promote`).set(auth).send({});
     expect(promoteRes.status).toBe(200);
     expect(promoteRes.body.promoted).toBe(true);
     expect(listPendingForTrail(SHADOW_CREEK_TRAIL_ID)).toHaveLength(0);
@@ -86,7 +97,7 @@ describe('Use case: crowdsourced photos get promoted into the official dataset',
     const submitRes = await contribute('hiker-1');
     const contributionId = submitRes.body.id;
 
-    const rejectRes = await request(app).post(`/contributions/${contributionId}/reject`);
+    const rejectRes = await request(app).post(`/contributions/${contributionId}/reject`).set(auth);
     expect(rejectRes.status).toBe(200);
     expect(rejectRes.body.rejected).toBe(true);
     expect(listPendingForTrail(SHADOW_CREEK_TRAIL_ID)).toHaveLength(0);
@@ -98,10 +109,10 @@ describe('Use case: crowdsourced photos get promoted into the official dataset',
   });
 
   it('404s when promoting or rejecting a contribution that does not exist', async () => {
-    const promoteRes = await request(app).post('/contributions/not-a-real-id/promote').send({});
+    const promoteRes = await request(app).post('/contributions/not-a-real-id/promote').set(auth).send({});
     expect(promoteRes.status).toBe(404);
 
-    const rejectRes = await request(app).post('/contributions/not-a-real-id/reject');
+    const rejectRes = await request(app).post('/contributions/not-a-real-id/reject').set(auth);
     expect(rejectRes.status).toBe(404);
   });
 });

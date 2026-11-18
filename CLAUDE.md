@@ -12,15 +12,15 @@ changes — they explain the data flow, the adapter pattern the mobile core is
 built around, the visual-place-recognition model strategy, and exactly what
 is and isn't built yet.
 
-This repo was built in a sandbox with no shell/npm access and no
-iOS/Android simulator, so **`npm install` has never been run against it and
-the test suites have never actually been executed.** Treat that as the first
-task in any new session, not an assumption to skip.
+The first sessions had no shell, so V1/V2 were only hand-verified. Since
+2026-11-18 install, typecheck and both suites actually run (and run in CI).
+Run `npm run check` before and after any change.
 
 ## Commands
 
 ```bash
-npm install                 # install all workspaces (run this first, in a real shell)
+npm install                 # install all workspaces
+npm run check               # typecheck all workspaces + run all tests (what CI runs)
 npm test                    # run backend + mobile test suites
 npm run test:backend        # backend only
 npm run test:mobile         # mobile only
@@ -37,16 +37,23 @@ cd mobile && npx jest test/integration/photoLandmarkConfirmation.test.ts
 cd mobile && npx jest test/integration/updateCheck.test.ts
 ```
 
-There is no lint config and no build/typecheck script wired into `npm test`
-yet; `tsc --noEmit` is available per-workspace (`npm run typecheck` in
-`backend` or `mobile`) but has not been run, so expect to find and fix type
-errors on first use.
+There is no lint config yet. `npm run typecheck` runs `tsc --noEmit` in
+every workspace.
 
 ## Architecture
 
 This is an npm-workspaces monorepo: `packages/shared` (types), `backend`
 (Express API), `mobile` (platform-agnostic core logic only — no React Native
 app has been scaffolded yet).
+
+**Security rules live in `docs/SECURITY.md`. Read it before touching any
+route, validator, or upload handling.** Key points: all photo uploads are
+decoded and re-encoded by sharp in `backend/src/validation/imageValidation.ts`
+(never store client bytes); every ID goes through `isSafeId`; referenced
+trails/waypoints must exist; free text goes through `isSafeText`; review
+endpoints require `OFFGRID_REVIEWER_TOKEN`. Backend tests that upload photos
+must use real images from `backend/test/helpers/images.ts`. Fake
+"magic bytes + junk" buffers are now correctly rejected.
 
 **`packages/shared/src/types.ts`** is the single contract between backend and
 mobile — `Trail`, `TripPackage`, `LandmarkPhoto`, `GpsFix`, `NavigationEvent`,
@@ -75,10 +82,14 @@ package until promoted/verified.
 corroboration-based promotion/verification rule (2+ distinct
 contributors/reporters near the same waypoint within a tolerance window —
 see each file's top comment for the exact numbers and the trust
-assumptions they rest on, especially that `waypointHintId` is trusted
-as-is). `contributionService.ts` additionally exposes a human-review
+assumptions they rest on). Waypoint resolution is shared in
+`services/waypointResolution.ts`: a hint must be a waypoint on that trail
+and is ignored if the upload's own GPS location contradicts it. Both
+services remember submission IDs, so a retry of the same id is idempotent and
+another user's id gets a 409. `contributionService.ts` additionally exposes a human-review
 override (`manuallyPromote`/`manuallyReject`, routed at
-`POST /contributions/:id/promote` and `/:id/reject`) — `hazardService.ts`
+`POST /contributions/:id/promote` and `/:id/reject`, guarded by
+`middleware/requireReviewer.ts`) — `hazardService.ts`
 does not have an equivalent yet, which is a known gap (roadmap item 4).
 Read `docs/roadmap.md`'s "Done (V2)" section before changing either of
 these — several deliberately-simple choices (the `2` threshold, the
@@ -110,7 +121,8 @@ implement it. The actual logic worth understanding:
 - `SyncQueue` / `HazardReportQueue` — queue `ContributedPhotoUpload`s /
   `HazardReportUpload`s locally and only flush to the backend when
   `NetworkAdapter.isOnline()` is true; synced items are removed from the
-  local queue. Both are thin subclasses of the generic
+  local queue. A permanently rejected item (`HttpError` 4xx) moves to
+  `rejected()`; transient failures stay queued. Both are thin subclasses of the generic
   `OfflineUploadQueue<TUpload, TAck>` — extend that one, not either
   subclass, if a third offline-queued upload type shows up.
 - `UpdateChecker` — compares a downloaded `TripPackage.trailVersion` against

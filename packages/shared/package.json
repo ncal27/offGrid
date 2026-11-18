@@ -4,5 +4,8 @@
   "private": true,
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  }
 }

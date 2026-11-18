@@ -11,7 +11,7 @@ import {
   isValidIsoTimestamp,
   isValidOptionalLatLng,
 } from '@offgrid/shared';
-import { validateBase64Image } from './imageValidation';
+import { SanitizedImage, sanitizeBase64Image } from './imageValidation';
 
 export interface ValidationResult<T> {
   valid: boolean;
@@ -19,15 +19,29 @@ export interface ValidationResult<T> {
   value?: T;
 }
 
-/** Everything a ContributedPhotoUpload needs except `id`, which the route fills in (client-supplied or generated) after validation passes. */
-export type ValidatedContributionFields = Omit<ContributedPhotoUpload, 'id'> & { id?: string };
+/**
+ * Everything a ContributedPhotoUpload needs except `id`, which the route fills
+ * in (client-supplied or generated) after validation passes. `imageBase64` here
+ * is the *sanitized, re-encoded* JPEG, never the bytes the client sent.
+ */
+export type ValidatedContributionFields = Omit<ContributedPhotoUpload, 'id'> & {
+  id?: string;
+  sanitizedImage: SanitizedImage;
+};
 
 /** Everything a HazardReportUpload needs except `id`, same reasoning as above. */
 export type ValidatedHazardReportFields = Omit<HazardReportUpload, 'id'> & { id?: string };
 
 const MAX_DESCRIPTION_LENGTH = 1000;
 
-export function validateContributedPhotoUploadBody(body: unknown): ValidationResult<ValidatedContributionFields> {
+/**
+ * Async because image sanitization decodes and re-encodes the photo. All the
+ * cheap field checks run first, and the image is only decoded if every other
+ * field is valid, so a request with a bad trailId never costs an image decode.
+ */
+export async function validateContributedPhotoUploadBody(
+  body: unknown,
+): Promise<ValidationResult<ValidatedContributionFields>> {
   const errors: string[] = [];
 
   if (typeof body !== 'object' || body === null) {
@@ -57,12 +71,12 @@ export function validateContributedPhotoUploadBody(body: unknown): ValidationRes
     errors.push('contributorId is required and must be a safe identifier');
   }
 
-  const imageResult = validateBase64Image(b.imageBase64);
-  if (!imageResult.valid) {
-    errors.push(`imageBase64 invalid: ${imageResult.error}`);
-  }
-
   if (errors.length > 0) return { valid: false, errors };
+
+  const imageResult = await sanitizeBase64Image(b.imageBase64);
+  if (!imageResult.valid) {
+    return { valid: false, errors: [`imageBase64 invalid: ${imageResult.error}`] };
+  }
 
   return {
     valid: true,
@@ -74,8 +88,9 @@ export function validateContributedPhotoUploadBody(body: unknown): ValidationRes
       capturedAt: b.capturedAt as string,
       location: b.location as ValidatedContributionFields['location'],
       gpsWeakOrMissing: (b.gpsWeakOrMissing as boolean | undefined) ?? false,
-      imageBase64: b.imageBase64 as string,
+      imageBase64: imageResult.image.jpeg.toString('base64'),
       contributorId: b.contributorId as string,
+      sanitizedImage: imageResult.image,
     },
   };
 }

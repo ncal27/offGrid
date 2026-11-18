@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../../src/app';
+import { makeImageBase64 } from '../helpers/images';
 import { SHADOW_CREEK_TRAIL_ID } from '../../src/data/fixtures';
 import { _resetForTests, listPendingForTrail } from '../../src/services/contributionService';
 
@@ -13,12 +14,12 @@ import { _resetForTests, listPendingForTrail } from '../../src/services/contribu
 describe('Use case: hiker contributes a landmark photo and reconnects later', () => {
   const app = createApp();
 
-  // Must pass the real image-signature check in
-  // backend/src/validation/imageValidation.ts (added after this test was
-  // first written) — a JPEG magic-byte prefix plus arbitrary payload bytes.
-  const validImageBase64 = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(16, 1)]).toString(
-    'base64',
-  );
+  // Must be a real, decodable image: the upload pipeline decodes and
+  // re-encodes every photo (see test/helpers/images.ts).
+  let validImageBase64: string;
+  beforeAll(async () => {
+    validImageBase64 = await makeImageBase64();
+  });
 
   beforeEach(() => _resetForTests());
 

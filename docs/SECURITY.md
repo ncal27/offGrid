@@ -1,0 +1,101 @@
+# OffGrid input & image security
+
+How OffGrid handles data it doesn't control: photo uploads, hazard reports,
+IDs, free text, and server responses on the phone. Each rule has a test in
+`backend/test/integration/securityHardening.test.ts`,
+`backend/test/integration/inputValidation.test.ts` or
+`mobile/test/integration/untrustedInput.test.ts`. Bug numbers refer to
+`docs/BUGS.md`.
+
+## Principles
+
+1. **The backend is the authority.** Mobile checks exist to avoid wasting a
+   hiker's storage and data, but a modified app can skip them. Every rule
+   below is enforced on the server.
+2. **Reject, don't silently "clean" fields.** A bad field gets a `400` with a
+   reason, not a quietly altered value. The one deliberate exception is
+   images, which are always rebuilt from pixels (below).
+3. **Cheapest checks first.** Size and format checks run before anything
+   expensive, so junk never costs an image decode.
+4. **Fail closed.** Missing configuration (e.g. no reviewer token) disables
+   the feature instead of opening it.
+
+## Image uploads (`backend/src/validation/imageValidation.ts`)
+
+Nothing the client sent is stored. The stored photo is a new JPEG
+re-encoded from the decoded pixels.
+
+| Step | Check | Stops |
+| --- | --- | --- |
+| 1 | String, ≤ 12MB of base64 text, before decoding | memory blowups |
+| 2 | Strict base64 (linear loop, not regex) | malformed data, the BUG-004 crash |
+| 3 | Decoded ≤ 8MB | oversized files |
+| 4 | Magic bytes are JPEG, PNG or WebP (`RIFF`+`WEBP`) | text, scripts, SVG, GIF, WAV/AVI (BUG-008), executables |
+| 5 | sharp reads the **header only**: format matches the magic bytes, ≤ 40 megapixels, ≤ 12,000px per side, ≥ 16px, single frame | decompression bombs (a 2KB file claiming 50,000×50,000), mislabelled files, tracking pixels, animations |
+| 6 | Full decode with `failOn: 'warning'` | truncated or corrupt files, files that only *start* like an image |
+| 7 | Re-encode: auto-orient, shrink to ≤ 2048px, flatten alpha, JPEG q85, **all metadata dropped** | EXIF/GPS/camera-serial leaks, hidden appended payloads (polyglots), parser exploits aimed at whoever reads the file later |
+
+sharp is pinned to a release with no known libvips CVEs (`npm audit` is
+clean, and CI fails on new high-severity advisories). Image decoders are the
+riskiest dependency in this project, so keep it updated.
+
+**Not covered yet** (roadmap item 8): face blurring, nudity and content
+moderation, duplicate and near-duplicate detection.
+
+## Text and structured fields (`packages/shared/src/validation.ts`)
+
+- **IDs** (`trailId`, `waypointHintId`, `contributorId`, submission `id`, …):
+  `^[A-Za-z0-9_-]{1,128}$`. This blocks path traversal (`../`), URL tricks,
+  and injection into storage keys.
+- **References must exist.** Unknown trail → `404`. A waypoint hint that
+  isn't on that trail → `400` (BUG-005, BUG-006).
+- **Enums** (`hazardType`, `severity`) are checked against runtime lists.
+- **Coordinates** must be finite, within ±90 / ±180.
+- **Timestamps** must parse, and be within ±10 years of now.
+- **Free text** (`description`): ≤ 1000 chars, not blank, and no control
+  characters, zero-width characters, bidi overrides ("Trojan Source") or
+  Unicode line separators (BUG-015). Emoji, accents and newlines are fine.
+- **Output encoding is still required.** Validation doesn't make text safe to
+  drop into HTML. Any future web dashboard or email must escape it when
+  rendering (React does this by default; `innerHTML` doesn't).
+- **Unknown JSON keys are ignored.** Validators copy only known fields into
+  new objects, so `__proto__` / `constructor` keys can't pollute anything.
+
+## Request-level protections (`backend/src/app.ts`)
+
+- Body limits: 15MB only on `/contributions/photos`, 100kb elsewhere (BUG-010).
+- Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are
+  self-reported, so this is the limit that actually holds. Behind a proxy,
+  pass `createApp({ trustProxy: 1 })` or every user shares one IP.
+- Volume caps: 20 pending per contributor per trail, 500 per trail, and a
+  global byte budget for pending images.
+- Submission IDs: retrying the same id returns the original answer;
+  someone else's id gets a `409` (BUG-007).
+- Review endpoints need `Authorization: Bearer $OFFGRID_REVIEWER_TOKEN`
+  (≥ 32 chars, constant-time compare). They're off if the token is unset (BUG-009).
+- Errors return a short JSON code and never a stack trace. No `X-Powered-By`;
+  `nosniff`, `no-store` and a locked-down CSP are always sent.
+
+## Mobile (`mobile/src/core`)
+
+- IDs are validated and URL-encoded before going into request paths or
+  storage keys (BUG-012).
+- A downloaded package must be for the trail that was requested.
+- The offline queue never gets stuck: permanent rejections go to a
+  `rejected()` list for the UI, and transient failures are retried later (BUG-011).
+- Non-finite embedding values count as "no match" (BUG-013).
+
+## Known gaps (before any real deployment)
+
+1. **No user accounts.** Contributor and reporter IDs are self-asserted, and
+   reviewers share one token. Real auth (e.g. OAuth plus a reviewer role) is
+   the biggest missing piece.
+2. **One `impassable` report is verified immediately** by design (see
+   `hazardService.ts`). Combined with (1), that's abusable. The circuit
+   breaker limits the damage but doesn't prevent it.
+3. **Everything is in memory.** A restart loses pending items, and
+   multiple server instances wouldn't share rate-limit or idempotency state.
+4. **HTTPS** must be terminated by whatever hosts this. The app itself
+   speaks plain HTTP.
+5. **Secrets** go in environment variables / `.env` (git-ignored); see
+   `backend/.env.example`. Never commit a real token.

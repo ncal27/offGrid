@@ -73,16 +73,32 @@ export function isValidIsoTimestamp(value: unknown): value is string {
 }
 
 // Disallows C0 control characters and DEL, but allows tab/newline/carriage
-// return so ordinary multi-line descriptions still work.
+// return so ordinary multi-line descriptions still work. Also disallows
+// characters that are invisible or that change how surrounding text is
+// displayed, all of which can be used to make a report say something
+// different on screen than what a reviewer thinks it says:
+//  - C1 controls (U+0080-U+009F)
+//  - zero-width / invisible formatting chars (U+200B-U+200F, U+2060-U+2064, U+FEFF)
+//  - Unicode line/paragraph separators (U+2028, U+2029)
+//  - bidirectional overrides/isolates (U+202A-U+202E, U+2066-U+2069), the
+//    "Trojan Source" trick: "safe \u202Eelbassapmi" renders as "safe impassable"
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+const UNSAFE_TEXT_CHARACTER_PATTERN =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
 
+/**
+ * Free text must be within the length cap, contain at least one
+ * non-whitespace character (a description of "     " is not a description),
+ * and contain none of the characters above. Note this is input *validation*,
+ * not output *encoding*: anything that later renders this text into HTML
+ * (a future web dashboard, an email) must still escape it at render time.
+ */
 export function isSafeText(value: unknown, maxLength: number): value is string {
   return (
     typeof value === 'string' &&
-    value.length > 0 &&
+    value.trim().length > 0 &&
     value.length <= maxLength &&
-    !CONTROL_CHARACTER_PATTERN.test(value)
+    !UNSAFE_TEXT_CHARACTER_PATTERN.test(value)
   );
 }
 
@@ -98,20 +114,42 @@ export function isOptionalBoolean(value: unknown): boolean {
   return value === undefined || typeof value === 'boolean';
 }
 
-// Same charset/padding check as backend/src/validation/imageValidation.ts,
-// deliberately duplicated rather than shared: this package must stay
-// Buffer-free to work in React Native, so it can only check that a string is
-// *plausibly* base64 (right charset, sane length) — it cannot decode it and
-// check magic bytes the way the Node-only backend validator does. Treat this
-// as a cheap client-side sanity check, not a substitute for the backend's
-// authoritative image validation.
-const BASE64_CHARSET_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$/;
+/**
+ * Strict RFC 4648 base64 check (standard alphabet, correct "=" padding, length
+ * a multiple of 4), written as a plain loop instead of a regex on purpose.
+ *
+ * The original version used a regex with a repeated group
+ * (`^(?:[A-Za-z0-9+/]{4})*...$`). V8's regex engine recurses on that pattern,
+ * and on a ~12MB string (a normal-sized phone photo) it throws
+ * "RangeError: Maximum call stack size exceeded", which turned every large
+ * upload into a 500 error (docs/BUGS.md, BUG-004). This loop is O(n), uses
+ * constant stack, and works the same in Node and React Native (no Buffer).
+ */
+export function isStrictBase64(value: string): boolean {
+  const len = value.length;
+  if (len === 0 || len % 4 !== 0) return false;
+  let padding = 0;
+  if (value.charCodeAt(len - 1) === 61 /* = */) padding++;
+  if (value.charCodeAt(len - 2) === 61) padding++;
+  for (let i = 0; i < len - padding; i++) {
+    const c = value.charCodeAt(i);
+    const ok =
+      (c >= 65 && c <= 90) || // A-Z
+      (c >= 97 && c <= 122) || // a-z
+      (c >= 48 && c <= 57) || // 0-9
+      c === 43 || // +
+      c === 47; // /
+    if (!ok) return false;
+  }
+  return true;
+}
 
+/**
+ * Cheap client-side sanity check (charset, padding, length). The mobile app
+ * can't decode and inspect the image here without Buffer, so this is not a
+ * substitute for the backend's authoritative image sanitization in
+ * backend/src/validation/imageValidation.ts.
+ */
 export function isPlausibleBase64(value: unknown, maxEncodedLength: number): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= maxEncodedLength &&
-    BASE64_CHARSET_PATTERN.test(value)
-  );
+  return typeof value === 'string' && value.length <= maxEncodedLength && isStrictBase64(value);
 }

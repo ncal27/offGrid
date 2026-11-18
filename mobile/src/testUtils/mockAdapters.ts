@@ -1,5 +1,5 @@
 import { GpsFix } from '@offgrid/shared';
-import { EmbeddingAdapter, GpsAdapter, NetworkAdapter, StorageAdapter } from '../core/adapters';
+import { EmbeddingAdapter, GpsAdapter, HttpError, NetworkAdapter, StorageAdapter } from '../core/adapters';
 
 /** Generic in-memory StorageAdapter — reusable across any test, not scenario-specific. */
 export class InMemoryStorageAdapter implements StorageAdapter {
@@ -36,6 +36,8 @@ export class FakeNetworkAdapter implements NetworkAdapter {
   private getRoutes = new Map<string, unknown>();
   private postRoutes = new Map<string, unknown>();
   public postCalls: { path: string; body: unknown }[] = [];
+  /** Per-upload-id scripted failures: an HTTP status, or 'network' for a dropped connection. */
+  private postFailures = new Map<string, number | 'network'>();
 
   constructor(options: { online?: boolean } = {}) {
     this.online = options.online ?? true;
@@ -48,6 +50,17 @@ export class FakeNetworkAdapter implements NetworkAdapter {
 
   mockPost(path: string, response: unknown): this {
     this.postRoutes.set(path, response);
+    return this;
+  }
+
+  /** Make POSTs whose body has this `id` fail, as the real adapter would. */
+  failPostFor(id: string, failure: number | 'network'): this {
+    this.postFailures.set(id, failure);
+    return this;
+  }
+
+  clearPostFailure(id: string): this {
+    this.postFailures.delete(id);
     return this;
   }
 
@@ -64,6 +77,10 @@ export class FakeNetworkAdapter implements NetworkAdapter {
 
   async post<T>(path: string, body: unknown): Promise<T> {
     this.postCalls.push({ path, body });
+    const id = (body as { id?: unknown } | null)?.id;
+    const failure = typeof id === 'string' ? this.postFailures.get(id) : undefined;
+    if (failure === 'network') throw new Error('FakeNetworkAdapter: connection reset');
+    if (typeof failure === 'number') throw new HttpError(failure);
     if (!this.postRoutes.has(path)) {
       throw new Error(`FakeNetworkAdapter: no mocked POST for ${path}`);
     }

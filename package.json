@@ -9,11 +9,15 @@
     "mobile"
   ],
   "scripts": {
-    "install:all": "npm install",
     "test": "npm run test --workspaces --if-present",
     "test:backend": "npm run test --workspace backend",
     "test:mobile": "npm run test --workspace mobile",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "check": "npm run typecheck && npm test",
     "dev:backend": "npm run dev --workspace backend"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  }
 }

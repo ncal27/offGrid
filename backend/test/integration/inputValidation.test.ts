@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../../src/app';
+import { makeImageBase64 } from '../helpers/images';
 import { SHADOW_CREEK_TRAIL_ID } from '../../src/data/fixtures';
 import { _resetForTests as resetContributions } from '../../src/services/contributionService';
 import { _resetForTests as resetHazards } from '../../src/services/hazardService';
@@ -11,7 +12,12 @@ import { _resetForTests as resetHazards } from '../../src/services/hazardService
  * happens by accident (a bug in a future native client) or on purpose.
  */
 describe('Use case: reject malicious or malformed input at the trust boundary', () => {
-  const app = createApp();
+  const app = createApp({ writeRateLimit: false });
+
+  let validImageBase64: string;
+  beforeAll(async () => {
+    validImageBase64 = await makeImageBase64();
+  });
 
   beforeEach(() => {
     resetContributions();
@@ -23,7 +29,7 @@ describe('Use case: reject malicious or malformed input at the trust boundary', 
     waypointHintId: 'scl-wp1',
     capturedAt: new Date().toISOString(),
     gpsWeakOrMissing: false,
-    imageBase64: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(100, 1)]).toString('base64'),
+    imageBase64: validImageBase64,
     contributorId: 'hiker-1',
   });
 

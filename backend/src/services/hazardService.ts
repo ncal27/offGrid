@@ -1,6 +1,5 @@
 import { HazardReport, HazardReportAck, HazardReportUpload } from '@offgrid/shared';
-import { getTrailById } from './trailService';
-import { haversineDistanceMeters } from '../geo';
+import { resolveWaypointId } from './waypointResolution';
 
 /**
  * V2 MVP for roadmap item 7 (hazard/wash-out layer). Deliberately reuses the
@@ -19,7 +18,6 @@ import { haversineDistanceMeters } from '../geo';
  * flagged as unresolved in docs/roadmap.md rather than solved here.
  */
 const PROMOTION_MIN_DISTINCT_REPORTERS = 2;
-const DISTANCE_TOLERANCE_METERS = 50;
 const TIME_WINDOW_MS = 1000 * 60 * 60 * 24 * 14; // ~14 days — hazards go stale much faster than landmarks do
 
 // Same blunt volume-cap reasoning as contributionService.ts.
@@ -41,6 +39,35 @@ const MAX_VERIFIED_HAZARDS_PER_TRAIL = 200;
 const pendingReports = new Map<string, HazardReportUpload>();
 const verifiedHazardsByTrailId = new Map<string, HazardReport[]>();
 
+/**
+ * Same idempotency/ownership record as contributionService's `submissions`.
+ * Without it, a retried 'impassable' report (the mobile queue retries
+ * whenever a response is lost) was verified a second time, shipping a
+ * duplicate hazard in every package (BUG-007).
+ */
+const MAX_REMEMBERED_SUBMISSIONS = 50_000;
+const submissions = new Map<string, { reporterId: string; ack: HazardReportAck }>();
+
+export type SubmissionIdCheck =
+  | { kind: 'new' }
+  | { kind: 'duplicate'; ack: HazardReportAck }
+  | { kind: 'conflict' };
+
+export function checkSubmissionId(id: string, reporterId: string): SubmissionIdCheck {
+  const previous = submissions.get(id);
+  if (!previous) return { kind: 'new' };
+  if (previous.reporterId !== reporterId) return { kind: 'conflict' };
+  return { kind: 'duplicate', ack: previous.ack };
+}
+
+function rememberSubmission(upload: HazardReportUpload, ack: HazardReportAck): void {
+  if (submissions.size >= MAX_REMEMBERED_SUBMISSIONS) {
+    const oldest = submissions.keys().next().value;
+    if (oldest !== undefined) submissions.delete(oldest);
+  }
+  submissions.set(upload.id, { reporterId: upload.reporterId, ack });
+}
+
 /** Checked by the route before accepting a new report, so a flood of garbage can't grow this map without bound. */
 export function canAcceptMoreHazardReports(trailId: string, reporterId: string): boolean {
   const trailPending = listPendingForTrail(trailId);
@@ -49,31 +76,20 @@ export function canAcceptMoreHazardReports(trailId: string, reporterId: string):
   return fromReporter.length < MAX_PENDING_PER_REPORTER_PER_TRAIL;
 }
 
-function resolveWaypointId(upload: HazardReportUpload): string | undefined {
-  if (upload.waypointHintId) return upload.waypointHintId;
-  if (!upload.location) return undefined;
-
-  const trail = getTrailById(upload.trailId);
-  if (!trail) return undefined;
-
-  let nearestId: string | undefined;
-  let nearestDist = Infinity;
-  for (const wp of trail.waypoints) {
-    const d = haversineDistanceMeters(upload.location, wp.location);
-    if (d < nearestDist) {
-      nearestDist = d;
-      nearestId = wp.id;
-    }
-  }
-  return nearestDist <= DISTANCE_TOLERANCE_METERS ? nearestId : undefined;
-}
-
+/**
+ * Reports only corroborate each other if both resolve to the SAME KNOWN
+ * waypoint. Previously `waypointId` could be `undefined` on both sides, and
+ * `undefined === undefined` meant any two reports of the same type with no
+ * location and no hint "corroborated" each other, wherever they actually
+ * were on the trail (BUG-014).
+ */
 function findCorroborators(
   trailId: string,
   waypointId: string | undefined,
   hazardType: string,
   aroundTime: Date,
 ): HazardReportUpload[] {
+  if (waypointId === undefined) return [];
   return [...pendingReports.values()].filter((r) => {
     if (r.trailId !== trailId) return false;
     if (r.hazardType !== hazardType) return false;
@@ -100,7 +116,17 @@ function verifyReport(upload: HazardReportUpload, waypointId: string | undefined
   return hazard;
 }
 
+/**
+ * Callers must have already run checkSubmissionId() (and handled duplicate or
+ * conflict) and canAcceptMoreHazardReports(). The route does both.
+ */
 export function submitHazardReport(upload: HazardReportUpload): HazardReportAck {
+  const ack = evaluate(upload);
+  rememberSubmission(upload, ack);
+  return ack;
+}
+
+function evaluate(upload: HazardReportUpload): HazardReportAck {
   pendingReports.set(upload.id, upload);
 
   const waypointId = resolveWaypointId(upload);
@@ -149,4 +175,5 @@ export function getVerifiedHazardsForTrail(trailId: string): HazardReport[] {
 export function _resetForTests(): void {
   pendingReports.clear();
   verifiedHazardsByTrailId.clear();
+  submissions.clear();
 }

@@ -1,81 +1,151 @@
+import sharp, { Metadata } from 'sharp';
+import { isStrictBase64 } from '@offgrid/shared';
+
 /**
- * Validates a base64-encoded photo upload before it's trusted with anything
- * else. This is the Node-only half of input validation (Buffer isn't
- * available in React Native, which is why this lives in backend/ rather
- * than packages/shared alongside the generic validators).
+ * Validates AND sanitizes a base64-encoded photo upload. Nothing the client
+ * sent is ever stored: the stored image is a fresh JPEG that sharp re-encodes
+ * from the decoded pixels.
  *
- * What this DOES catch: non-string/empty input, absurdly large payloads
- * (checked before the expensive decode step, not after), invalid base64
- * charset/padding, and content that doesn't start with a recognized
- * image file signature (jpeg/png/webp) — so a client can't, say, upload an
- * arbitrary binary blob, a text file, or an empty string and have it treated
- * as a photo.
+ * Layers, cheapest first, so obviously-bad input is rejected before any
+ * expensive work happens:
+ *  1. Type/size checks on the raw string (before decoding anything).
+ *  2. Strict base64 check (linear-time loop, see isStrictBase64 / BUG-004).
+ *  3. Decoded byte-size cap.
+ *  4. Magic-byte sniffing: the bytes must actually start like a JPEG, PNG or
+ *     WebP file (WebP requires both "RIFF" and "WEBP", not just "RIFF",
+ *     which also matches WAV/AVI files; see BUG-008).
+ *  5. Header inspection with sharp: the format sharp detects must match the
+ *     sniffed one, dimensions must be sane, and the total pixel count is capped
+ *     *before* full decode. This is the decompression-bomb guard: a tiny
+ *     compressed file can claim 100,000 x 100,000 pixels and would otherwise
+ *     allocate tens of GB when decoded.
+ *  6. Full decode + re-encode. This:
+ *       - proves the file is a decodable image, not just something with the
+ *         right first few bytes (polyglot files, truncated/corrupt data);
+ *       - strips ALL metadata (EXIF incl. GPS coordinates, camera serials,
+ *         XMP, ICC, comments). sharp drops metadata unless told to keep it;
+ *       - applies the EXIF orientation first, so stripping EXIF doesn't leave
+ *         the photo sideways;
+ *       - throws away any bytes hidden after the image data or in unusual
+ *         segments, because only pixels survive a re-encode;
+ *       - downsizes very large photos to a bounded size for storage.
  *
- * What this explicitly does NOT catch, and shouldn't be assumed to:
- *  - Malware/exploit payloads crafted to look like a valid image but target
- *    a parser bug in whatever actually decodes it later (this never decodes
- *    pixels, only checks a signature).
- *  - EXIF metadata, which can itself contain GPS coordinates or other
- *    personal data — stripping that is real work tracked in
- *    docs/roadmap.md item 8 (privacy/moderation), not done here.
- *  - Decompression-bomb protection for whatever real image-processing
- *    pipeline eventually resizes/thumbnails this (a small *compressed* file
- *    can still decode to a huge pixel buffer) — not a concern yet because
- *    nothing in this repo decodes pixels, but it will be the moment
- *    docs/roadmap.md item 5 (server-side embedding generation) exists.
+ * Still NOT handled here (see docs/roadmap.md item 8): face blurring, nudity
+ * and content moderation, duplicate detection.
  */
 
-const MAX_BASE64_LENGTH = 12 * 1024 * 1024; // ~12MB of base64 text, checked before decoding
-const MAX_DECODED_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB of actual image bytes
+export const MAX_BASE64_LENGTH = 12 * 1024 * 1024; // checked before decoding
+export const MAX_DECODED_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB of actual image bytes
+/** Anything beyond this is refused before full decode (decompression-bomb guard). ~40 megapixels. */
+export const MAX_INPUT_PIXELS = 40_000_000;
+export const MAX_INPUT_DIMENSION = 12_000;
+export const MIN_INPUT_DIMENSION = 16;
+/** Longest edge of the stored, re-encoded image. */
+export const OUTPUT_MAX_DIMENSION = 2048;
+const OUTPUT_JPEG_QUALITY = 85;
 
-// Strict base64 charset check (RFC 4648), including correct padding — a
-// permissive decoder (like Node's Buffer, which silently drops invalid
-// characters instead of erroring) would otherwise let malformed input
-// through disguised as something it was never valid in the first place.
-const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$/;
+type SniffedFormat = 'jpeg' | 'png' | 'webp';
 
-const IMAGE_SIGNATURES: { format: string; bytes: number[] }[] = [
-  { format: 'jpeg', bytes: [0xff, 0xd8, 0xff] },
-  { format: 'png', bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
-  // WebP's real container check also requires 'WEBP' at byte offset 8; the
-  // 'RIFF' prefix alone is a reasonable stand-in for this validator's scope.
-  { format: 'webp', bytes: [0x52, 0x49, 0x46, 0x46] },
-];
-
-export interface ImageValidationResult {
-  valid: boolean;
-  error?: string;
-  decodedByteLength?: number;
+function sniffFormat(bytes: Buffer): SniffedFormat | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpeg';
+  const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.length >= 8 && png.every((b, i) => bytes[i] === b)) return 'png';
+  if (
+    bytes.length >= 12 &&
+    bytes.toString('ascii', 0, 4) === 'RIFF' &&
+    bytes.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    return 'webp';
+  }
+  return null;
 }
 
-export function validateBase64Image(imageBase64: unknown): ImageValidationResult {
+export interface SanitizedImage {
+  /** Re-encoded JPEG, metadata stripped. This is the ONLY image data that should ever be stored. */
+  jpeg: Buffer;
+  width: number;
+  height: number;
+  originalFormat: SniffedFormat;
+  originalByteLength: number;
+}
+
+export type ImageSanitizationResult =
+  | { valid: true; image: SanitizedImage }
+  | { valid: false; error: string };
+
+const fail = (error: string): ImageSanitizationResult => ({ valid: false, error });
+
+export async function sanitizeBase64Image(imageBase64: unknown): Promise<ImageSanitizationResult> {
   if (typeof imageBase64 !== 'string' || imageBase64.length === 0) {
-    return { valid: false, error: 'imageBase64 must be a non-empty string' };
+    return fail('imageBase64 must be a non-empty string');
   }
-
   if (imageBase64.length > MAX_BASE64_LENGTH) {
-    return { valid: false, error: 'imageBase64 exceeds the maximum allowed size' };
+    return fail('imageBase64 exceeds the maximum allowed size');
   }
-
-  if (!BASE64_PATTERN.test(imageBase64)) {
-    return { valid: false, error: 'imageBase64 is not validly encoded base64' };
+  if (!isStrictBase64(imageBase64)) {
+    return fail('imageBase64 is not validly encoded base64');
   }
 
   const decoded = Buffer.from(imageBase64, 'base64');
-
-  if (decoded.length === 0) {
-    return { valid: false, error: 'decoded image is empty' };
-  }
+  if (decoded.length === 0) return fail('decoded image is empty');
   if (decoded.length > MAX_DECODED_IMAGE_BYTES) {
-    return { valid: false, error: 'decoded image exceeds the maximum allowed size (8MB)' };
+    return fail('decoded image exceeds the maximum allowed size (8MB)');
   }
 
-  const matchesKnownFormat = IMAGE_SIGNATURES.some((sig) =>
-    sig.bytes.every((byte, i) => decoded[i] === byte),
-  );
-  if (!matchesKnownFormat) {
-    return { valid: false, error: 'file does not match a recognized image format (jpeg/png/webp)' };
+  const sniffed = sniffFormat(decoded);
+  if (!sniffed) return fail('file does not match a recognized image format (jpeg/png/webp)');
+
+  // `limitInputPixels` makes sharp refuse oversized images from the header,
+  // before allocating a pixel buffer. `failOn: 'warning'` treats corrupt or
+  // truncated data as an error instead of decoding whatever it can.
+  const sharpOptions = { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'warning' as const };
+
+  let meta: Metadata;
+  try {
+    meta = await sharp(decoded, sharpOptions).metadata();
+  } catch {
+    return fail('image could not be read (corrupt or unsupported file)');
   }
 
-  return { valid: true, decodedByteLength: decoded.length };
+  if (meta.format !== sniffed) {
+    return fail('image contents do not match its file signature');
+  }
+  const { width, height } = meta;
+  if (!width || !height) return fail('image has no readable dimensions');
+  if (width > MAX_INPUT_DIMENSION || height > MAX_INPUT_DIMENSION || width * height > MAX_INPUT_PIXELS) {
+    return fail(`image dimensions are too large (max ${MAX_INPUT_PIXELS / 1_000_000} megapixels)`);
+  }
+  if (width < MIN_INPUT_DIMENSION || height < MIN_INPUT_DIMENSION) {
+    return fail(`image is too small (min ${MIN_INPUT_DIMENSION}x${MIN_INPUT_DIMENSION})`);
+  }
+  if ((meta.pages ?? 1) > 1) {
+    return fail('animated or multi-page images are not accepted');
+  }
+
+  try {
+    const { data, info } = await sharp(decoded, sharpOptions)
+      .autoOrient()
+      .resize({
+        width: OUTPUT_MAX_DIMENSION,
+        height: OUTPUT_MAX_DIMENSION,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .flatten({ background: '#ffffff' }) // PNG/WebP transparency -> white, since JPEG has no alpha
+      .jpeg({ quality: OUTPUT_JPEG_QUALITY })
+      .toBuffer({ resolveWithObject: true });
+
+    return {
+      valid: true,
+      image: {
+        jpeg: data,
+        width: info.width,
+        height: info.height,
+        originalFormat: sniffed,
+        originalByteLength: decoded.length,
+      },
+    };
+  } catch {
+    return fail('image could not be decoded (corrupt or unsupported file)');
+  }
 }

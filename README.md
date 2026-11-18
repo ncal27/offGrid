@@ -19,19 +19,25 @@ Read **`docs/architecture.md`** first for how the pieces fit together, and
 - `packages/shared` — TypeScript types shared by backend and mobile
 - `backend` — Express API (trail search/detail, trip package building, contribution intake)
 - `mobile` — platform-agnostic core logic + adapter interfaces for native/ML integration
-- `docs` — architecture and roadmap
+- `docs` — architecture, roadmap, bug log, and security/input-handling rules
 
 ## Getting started
 
 ```bash
 npm install          # installs all workspaces
+npm run check        # typecheck + all tests (what CI runs)
 npm test             # runs backend + mobile test suites
 npm run test:backend
 npm run test:mobile
 npm run dev:backend  # starts the API on :4000
 ```
 
-No build step has been run as part of creating this repo — `npm install`
-and `npm test` have not been executed in this environment (no shell was
-available), so run them first thing to confirm everything installs and
-passes cleanly before building on top of it.
+Requires Node 20+. Install, typecheck and all tests run clean (they're also
+run by CI on every push/PR, see `.github/workflows/ci.yml`).
+
+To use the photo review endpoints locally, copy `backend/.env.example`,
+set `OFFGRID_REVIEWER_TOKEN`, and export it before `npm run dev:backend`.
+Without a token they're disabled on purpose.
+
+See **`docs/SECURITY.md`** for how user input and uploaded images are
+validated and sanitized, and **`CONTRIBUTING.md`** for the team workflow.

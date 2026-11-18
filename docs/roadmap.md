@@ -117,11 +117,27 @@
    GPS is lost entirely, offline emergency info. Worth revisiting once the
    core loop is proven out.
 
-## A reminder that applies to all of the above
+## Done (security hardening, 2026-11-18)
 
-Nothing in this repo has been executed — `npm install` and the test suites
-have never actually been run (the sandbox this was built in never had a
-working shell). Every item above was verified by hand-tracing the code and
-math, not by running it. See `docs/BUGS.md` for the review log and the one
-real bug that approach already caught. Run the suite for real before trusting
-any of this further.
+- Real image sanitization (decode, bomb guard, metadata strip, re-encode), plus
+  input validation and abuse limits across backend and mobile. See
+  `docs/SECURITY.md` and BUG-004 to BUG-016 in `docs/BUGS.md`.
+- Partially addresses item 4: `waypointHintId` is now checked against the
+  trail and against the upload's own location.
+- Partially addresses item 8: EXIF/GPS metadata is stripped from every
+  contributed photo. Face blurring and moderation are still open.
+
+## Also needed before real users
+
+10. **Real authentication.** User accounts for contributors, and a
+    reviewer role instead of the shared `OFFGRID_REVIEWER_TOKEN`. See the
+    "Known gaps" list in `docs/SECURITY.md`.
+11. **Persistence.** A database and object storage for photos instead of
+    in-memory maps, and shared state for rate limiting/idempotency if more
+    than one server instance runs.
+
+## Verification
+
+`npm run check` runs typecheck and every test, locally and in CI. Hand
+review still catches things tests don't, so log anything found in
+`docs/BUGS.md`.
