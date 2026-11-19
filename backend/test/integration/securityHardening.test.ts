@@ -347,3 +347,34 @@ describe('Use case: one client floods the write endpoints', () => {
     expect((await request(app).get('/trails/search')).status).toBe(200);
   });
 });
+
+describe('Use case: internal failures are reported honestly (Ironhide: BUG-016)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const trailService = require('../../src/services/trailService');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const requestValidation = require('../../src/validation/requestValidation');
+  const app = createApp({ writeRateLimit: false });
+  let errorSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('reports a SyntaxError thrown by our own code as a 500, not "your JSON is invalid"', async () => {
+    jest.spyOn(trailService, 'searchTrails').mockImplementation(() => {
+      throw new SyntaxError('bug in our code');
+    });
+    const res = await request(app).get('/trails/search?q=x');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal_server_error' });
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it('returns a 500 (instead of hanging) when the async photo route fails unexpectedly', async () => {
+    jest.spyOn(requestValidation, 'validateContributedPhotoUploadBody').mockRejectedValue(new Error('boom'));
+    const res = await request(app).post('/contributions/photos').send({}).timeout(5000);
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal_server_error' });
+  });
+});

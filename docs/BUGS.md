@@ -7,6 +7,22 @@ test suite or by code review. BUG-001 to BUG-003 were found by hand-review
 before the suite had ever run; from BUG-004 on, every bug was reproduced by
 an actual failing request or test before it was fixed.
 
+## Ironhide protocol
+
+Every bug here has a regression test that fails if the bug comes back.
+Find a bug's test with `grep -rn "BUG-NNN" backend/test mobile/test`. Adding
+a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
+
+| Bug | Guarding test |
+| --- | --- |
+| BUG-001 | `mobile/test/integration/planAndNavigateOffline.test.ts` (reached_waypoint fires once) |
+| BUG-002 | `backend/test/integration/inputValidation.test.ts` (8MB image gets a 400, not 413) |
+| BUG-003 | All photo-upload tests use real images from `backend/test/helpers/images.ts`; fake "magic bytes + junk" is asserted rejected in `securityHardening.test.ts` |
+| BUG-004 | `securityHardening.test.ts` (large payload doesn't 500), `inputValidation.test.ts` |
+| BUG-005 – BUG-010, BUG-014, BUG-015 | `backend/test/integration/securityHardening.test.ts` |
+| BUG-011 – BUG-013 | `mobile/test/integration/untrustedInput.test.ts` |
+| BUG-016 | `securityHardening.test.ts` ("internal failures are reported honestly"), shown to fail with the bug reintroduced |
+
 ## Review log
 
 | Date | Scope | Outcome |

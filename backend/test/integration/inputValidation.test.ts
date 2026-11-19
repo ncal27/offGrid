@@ -98,7 +98,7 @@ describe('Use case: reject malicious or malformed input at the trust boundary', 
     expect(res.body.details.some((d: string) => d.includes('imageBase64'))).toBe(true);
   });
 
-  it('rejects a decoded image larger than the 8MB cap', async () => {
+  it('rejects a decoded image larger than the 8MB cap (Ironhide: BUG-002, BUG-004)', async () => {
     // ~8.5MB decoded (comfortably over the 8MB cap, comfortably under the
     // 15MB request body limit once base64-encoded).
     const oversized = Buffer.concat([

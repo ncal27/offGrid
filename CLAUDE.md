@@ -153,6 +153,13 @@ unbuilt features, not defects). Check it before assuming something is
 correct, and add to it — don't just silently fix — whenever you find a real
 bug, the same way BUG-001 was logged during V1.
 
+**Ironhide protocol (mandatory):** every fixed bug gets a regression test,
+tagged in the test name or a comment as `(Ironhide: BUG-NNN)`, that fails
+with the bug present and passes with the fix. A fix isn't done until that
+test is in the suite and `npm run check` passes. Never delete or weaken an
+Ironhide test to make something else pass. Record the guarding test in the
+table at the top of `docs/BUGS.md`.
+
 ## What's not built yet
 
 See `docs/roadmap.md` for the full list and priority order — it has "Done

@@ -58,7 +58,7 @@ describe('Use case: plan + download online, then navigate fully offline', () => 
       atWaypointEvents.some((e) => e.type === 'reached_waypoint' && e.nearestWaypointId === 'scl-wp1'),
     ).toBe(true);
 
-    // Reaching the same waypoint again should not re-fire reached_waypoint.
+    // Reaching the same waypoint again should not re-fire reached_waypoint (Ironhide: BUG-001).
     const repeatEvents = navigator.processFix(fix(37.8659, -119.5362));
     expect(repeatEvents.some((e) => e.type === 'reached_waypoint')).toBe(false);
 
