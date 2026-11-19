@@ -1,72 +1,100 @@
 # OffGrid Roadmap
 
-Where the project is going, and the decisions still open. This is the
-team-level plan. `docs/roadmap.md` is the detailed engineering backlog that
-sits under it. Update this file when a decision is made: move the question
-to "Decisions made" with the date and the reasoning.
+Where the project is going and what's still undecided. This is the
+team-level plan; `docs/roadmap.md` is the detailed engineering backlog under
+it. When a decision is made, log it in "Decisions made" with the date and
+reason.
 
-**Current version:** 1.0.0 (2026-11-19). See `CHANGELOG.md`.
+**Current version:** 1.0.0 (2026-11-19), plus unreleased changes. See `CHANGELOG.md`.
+**Goal:** a class project with a **live demo**: working by the **week of Dec 2**,
+field-tested on Wellesley trails, and final on **Dec 9**. Free and
+open-source tools only; robust enough to demo, not to sell.
 
-## Where we are (1.0.0)
+## Where we are
 
-Working, tested core logic for the full loop: plan, download, navigate
-offline, photo-confirm, contribute, report and verify hazards (Waze-style),
+Tested core logic for the whole loop: plan, download, navigate offline,
+photo-confirm, contribute, report and verify hazards (3-hiker consensus),
 and sync. A hardened backend (input and image sanitization, rate limits,
-reviewer auth). 126 automated tests, Ironhide protocol in place.
+reviewer auth). 126 automated tests, Ironhide protocol, change tracking.
 
-**Not there yet:** no app you can install (logic only, no screens), no real
-trail data (one sample trail), no real photo-matching model (faked in tests),
-no user accounts, no database (everything resets on restart).
+**Missing for the demo:** an app on a phone, real Wellesley trail data, a
+real photo-matching model, sign-in, a database (state is lost on restart),
+and face blurring.
 
-## Proposed phases
+## Demo stack (all free)
 
-Proposed order. Confirm or reshuffle when answering the questions below.
-
-### 1.1: Team-ready foundation
-- Shared home for the code: a GitHub Organization (recommended) and/or SharePoint (see Q1)
-- Agree the versioning and release process (Q2)
-- Persistence: a real database and photo storage, so data survives restarts (Q5)
-
-### 1.2: Real users
-- User accounts and sign-in (Q4). This makes reputation and abuse limits meaningful.
-- Reviewer accounts and roles instead of a shared token
-- Safety disclaimer and terms for hazard info (Q11)
-
-### 2.0: An app on a phone
-- React Native app: map, navigation, camera, "Still there?" prompts (Q3)
-- Offline map tiles for downloaded trails
-- Real trail data for a pilot area (Q6)
-
-### 2.x: Smarter
-- Real on-device photo-matching model (Q9)
-- Photo moderation and privacy: face blurring, sensitive locations (Q8)
-- Tune hazard thresholds from real reports (Q7)
-- Photo-based trail-condition detection ("is this washed out?")
-- Safety extras: breadcrumb trail for backtracking, offline emergency info
-
-## Open questions
-
-Each one includes my recommendation, so a quick yes/no is enough.
-
-| # | Question | Recommendation |
+| Need | Choice | Why |
 | --- | --- | --- |
-| Q1 | **Where does the code live?** SharePoint is fine for sharing docs and release zips, but a git repo is much safer for code. Syncing a `.git` folder through SharePoint/OneDrive can corrupt it, and file-level merges between people editing at the same time are painful. | GitHub Organization as the source of truth for code. SharePoint holds release zips and the docs non-coders need. `npm run changes` is the safety net either way. |
-| Q2 | **Versioning and release process.** Who decides when something becomes 1.1.0? How are features cut? | SemVer (`MAJOR.MINOR.PATCH`). One person is "release owner" per cycle. Releases at milestones (e.g. per class deliverable). Cut a feature by reverting it to the last release, or put risky features behind an on/off setting. |
-| Q3 | **Which phones, which framework?** iOS, Android or both? | React Native with Expo, both platforms. The core logic is already TypeScript, built to plug into it. |
-| Q4 | **Sign-in method?** | Start simple: Google/Apple sign-in through one auth service (e.g. Firebase Auth or Supabase). Avoid building our own passwords. |
-| Q5 | **Hosting and database, and budget?** | A free tier to start (e.g. Supabase or Firebase for database, auth and storage together; Render/Railway/Fly for the API). |
-| Q6 | **Pilot area?** Which trails first? | One park or region you can actually hike and test in, rather than "everywhere". |
-| Q7 | **Hazard policy.** Should a single "impassable" report be shared right away (currently yes, labelled unconfirmed)? Who are reviewers: the team, or ranger/park partners? | Keep it as is for now. Team members act as reviewers until there's a partner. |
-| Q8 | **Photo privacy policy.** Blur faces automatically? Block photos near sensitive sites (nests, archaeological sites)? | Yes to automatic face blurring before any photo is shared. Sensitive-site rules decided per pilot area. |
-| Q9 | **Who owns the photo-matching model?** Train our own or use a pretrained one? | Use a pretrained, phone-sized model first and measure it on pilot-trail photos. Only train our own if it isn't accurate enough. |
-| Q10 | **Class scope and deadline.** What must be demo-able, and by when? | Tell me the date and the must-haves, and I'll re-order the phases to fit. |
-| Q11 | **Liability.** Hazard info could be wrong in either direction. | A clear in-app disclaimer: "community-reported, may be inaccurate, use your judgment". Check with your instructor whether the class needs anything formal. |
-| Q12 | **Team roles.** Who owns what (backend, app, data, ML, docs/release)? | Name an owner per area so reviews and decisions don't stall. |
+| App on iPhone + Android | **Expo (React Native)**, run through the free **Expo Go** app | No app store, no $99 Apple account. Scan a QR code and it runs. Our core logic is already TypeScript |
+| Maps | `react-native-maps` (included in Expo Go) with OpenStreetMap tiles, cached for offline | Works in Expo Go. Native offline-map libraries would need custom builds |
+| Trail data | **OpenStreetMap** via the Overpass API, checked against the town's trail maps | Free; covers Wellesley's trails. Must show "© OpenStreetMap contributors" |
+| Sign-in | **Supabase anonymous sign-in**: one tap, no passwords | Easiest option, and it gives each phone a server-issued ID, which makes the 3-hiker rule much harder to fake than self-chosen IDs |
+| Database + photo storage | **Supabase** free tier (Postgres + Storage) | Free hosting would otherwise lose all hazards and photos every time the server sleeps |
+| API hosting | **Render** free web service (our existing Express backend) | Free. It sleeps after ~15 min idle, so open it a minute before the demo |
+| Photo matching | A ready-made, pretrained model (e.g. MobileNet image embeddings via TensorFlow.js). **No custom training** | Decided. Week 1 spike: confirm it runs inside Expo Go; fallback below |
+| Face blurring | Open-source face detection on the server before any photo is stored or shared | See privacy decision below |
+
+**Main technical risk:** running a model on the phone inside Expo Go. If the
+week-1 spike shows it doesn't work, the fallback for the demo is matching on
+the server when there's signal, with GPS-only confirmation offline. The
+demo still works; it's just less impressive offline.
+
+## Plan to Dec 9
+
+| When | Release | Goal |
+| --- | --- | --- |
+| **Nov 19 – 25** | **1.1.0** Foundation | Push to GitHub. Supabase project (database, storage, anonymous sign-in). Store hazards and photos in the database instead of memory. Import 3–5 Wellesley trails from OpenStreetMap. Expo app skeleton: trail list → map → live GPS on the route. Photo-model spike in Expo Go. |
+| **Nov 26 – Dec 1** (Thanksgiving week, lighter) | **1.2.0** Demo-ready | Download a trail for offline use. Camera + photo match. Report a hazard; "Still there?" prompt; hazard markers with confidence labels. Face blurring. Disclaimer screen. Deploy the API to Render. |
+| **Week of Dec 2** | 1.2.x | **Working demo.** Field-test on the pilot trails, collect reference landmark photos, tune the hazard numbers, fix bugs (Ironhide: every fix gets a test). |
+| **Dec 8** | **1.3.0** Final | Feature freeze, final release, rehearse the demo. |
+| **Dec 9** | — | Due / live demo. |
+
+**Demo-day checklist:** wake the Render server; pre-download the trail on
+every demo phone; show navigation in airplane mode; use **3 phones** to show
+a hazard appearing only after the third hiker confirms it.
+
+## Pilot area: Wellesley, MA
+
+Candidate trails (confirm which 2–3 to field-test, see Q-B):
+
+- **Brook Path / Fuller Brook Park.** Easy, flat, ADA-accessible, ~2.5–3 mi. Good for a safe first test and demo.
+- **Centennial Reservation.** Woodland trails and the Maugus Hill view. A good "real hike" test.
+- **Rocky Ledges / Boulder Brook Reservation.** Rockier, with distinctive landmarks, which is good for photo matching.
+- **Elm Bank Reservation, Riverside Trail.** ~2.5 mi along the Charles River.
+- **Sudbury Aqueduct / Waban Arches.** Very recognizable landmark (the arches).
+
+Sources: [Town of Wellesley: Favorite Trail Walks](https://www.wellesleyma.gov/1724/Favorite-Trail-Walks), [MassTrails: Wellesley](https://masstrails.com/wellesley.html), [Swellesley Report: Waban Arches and Sudbury Aqueduct](https://theswellesleyreport.com/2020/01/wellesley-hikes-the-waban-arches-and-sudbury-aqueduct/).
 
 ## Decisions made
 
 | Date | Decision | Why |
 | --- | --- | --- |
 | 2026-11-18 | Every bug fix needs a regression test (Ironhide protocol) | Fixed bugs must not come back |
-| 2026-11-19 | Hazards are verified Waze-style (confidence from nearby confirmations, decaying over time) | Single reports are unreliable; trails change |
-| 2026-11-19 | 1.0.0 baseline; all changes logged in `CHANGELOG.md`; `npm run changes` detects unlogged edits | Files will be edited by several people and AI tools, often outside git |
+| 2026-11-19 | Hazards verified Waze-style (confidence from nearby confirmations, decaying over time) | Single reports are unreliable; trails change |
+| 2026-11-19 | 1.0.0 baseline; every change logged in `CHANGELOG.md`; `npm run changes` catches unlogged edits | Files get edited by several people and AI tools |
+| 2026-11-19 | **Code on GitHub** (project lead's personal account for now) | Move to an Organization only if the project outlives the class |
+| 2026-11-19 | **Project lead is release owner.** Classmates send changes; lead and Claude review them together and decide what goes in which release | One person decides, so releases stay coherent |
+| 2026-11-19 | **iOS and Android via Expo / Expo Go** | Fastest path to a live demo on both, free |
+| 2026-11-19 | **Easiest free sign-in** (Supabase anonymous) | Class project, not a product |
+| 2026-11-19 | **Free and open-source only** for hosting and tools | No budget |
+| 2026-11-19 | **Pilot: Wellesley, MA trails** | Near Babson; the team can field-test them |
+| 2026-11-19 | **Hazards need 3 different hikers before anyone sees them, every severity.** Impassable is no longer shown after one report. Implemented (`MIN_DISTINCT_CONFIRMATIONS = 3`; raise to 5 if needed) | One person must never be able to put a hazard on everyone's map |
+| 2026-11-19 | **Blur all faces, especially children's.** If faces are a large part of the photo, reject it and ask the hiker to retake it without people. Landmark photos never need people in them | Privacy |
+| 2026-11-19 | **Ready-made photo model; no custom training** | Time and complexity |
+| 2026-11-19 | **A short disclaimer is enough** for liability (class project) | See wording below |
+| 2026-11-19 | **Shared ownership**: no fixed roles; anyone can work on anything, and the lead reviews | Small team, short timeline |
+
+**Disclaimer wording (draft):** "OffGrid is a student project. Trail and
+hazard information is community-reported and may be wrong or out of date.
+Always use your own judgment, carry a paper map, and follow posted signs and
+park rules."
+
+## Open questions (smaller ones; answer whenever)
+
+| # | Question | Recommendation |
+| --- | --- | --- |
+| Q-A | **Phones for the demo.** Who has an iPhone and who has Android? We need at least 3 phones to show the 3-hiker rule live. | If there aren't 3, add a demo-only "simulate another hiker" button, clearly labelled. |
+| Q-B | **Which 2–3 trails to field-test** in the week of Dec 2? | Brook Path (easy), Rocky Ledges (landmarks), Waban Arches (most recognizable). |
+| Q-C | **GitHub repo name and visibility.** | Private repo named `offgrid`; add classmates as collaborators. |
+| Q-D | **Does the class require disclosure of AI-assisted work?** | Check the syllabus. `CHANGELOG.md` already records which tool made each change, which makes disclosure easy. |
+| Q-E | **Keep the 3-hiker rule at 3, or raise to 5 after field testing?** | Keep 3 for the demo. Small groups can't easily get 5 confirmations on a quiet trail. |

@@ -20,11 +20,16 @@ Sources: [Waze Help: Report road hazards](https://support.google.com/waze/answer
 
 ## What's different for hikers
 
+**Team rule (2026-11-19): no hazard is shown to other hikers until at least
+3 different hikers back it, whatever its severity.** One person can never put
+a hazard on everyone's map. Change `MIN_DISTINCT_CONFIRMATIONS` in
+`hazardService.ts` to raise it (e.g. to 5).
+
 | Waze (drivers) | OffGrid (hikers) |
 | --- | --- |
 | Always online; answers arrive instantly | Usually offline. Answers are queued on the phone and synced later, so **decay is measured from when the hiker saw it**, not when it synced |
 | Lots of traffic: many confirmations | Few people per trail: thresholds are low (≈ 2 hikers) |
-| A wrong report wastes a few minutes | A wrong "bridge out" turns people around, and a *missed* one is dangerous. Severity changes how much proof is needed |
+| A wrong report wastes a few minutes | A wrong "bridge out" turns people around. We chose consensus (3 hikers) over speed, even for severe hazards |
 
 ## How a report becomes a shared hazard
 
@@ -54,14 +59,16 @@ Sources: [Waze Help: Report road hazards](https://support.google.com/waze/answer
      | bridge_out | 30 days |
 
 4. **Confidence** = sum of "still there" weights − sum of "not there" weights.
-5. **Shared** (shipped in trip packages) while confidence ≥ the threshold for
-   its severity:
+5. **Shared** (shipped in trip packages) only when BOTH:
+   - at least **3 different hikers** have reported it or said "still there"
+     (a reviewer's verification also counts), and
+   - confidence ≥ **1.5**, the same for every severity. Three on-the-spot hikers
+     give 3.0, which stays shared for one half-life unless re-confirmed. Three
+     hikers without GPS give only 1.5, so it's shared only briefly.
 
-   | Severity | Threshold | In practice |
-   | --- | --- | --- |
-   | minor / moderate | 1.5 | two hikers on the spot, or one on the spot + one without GPS |
-   | severe | 1.25 | the same, slightly easier |
-   | impassable | 0.4 | any single report, shipped as **"Unconfirmed: 1 report"** |
+   Confidence level shipped to the app: **low** when barely above the bar
+   (fading, or confirmed mostly without GPS: "may be outdated"), **medium**
+   at 2× the bar, **high** at 2× the bar with 5+ hikers.
 
    An incident's severity is what most of its reporters said (ties go to the
    less severe option), so one person can't escalate a "moderate" to
@@ -73,18 +80,18 @@ Sources: [Waze Help: Report road hazards](https://support.google.com/waze/answer
 
 ## Worked examples
 
-- **Two hikers report a downed tree at the creek, both with GPS.** 1.0 + 1.0
-  = 2.0 ≥ 1.5, so it's shared, confidence "medium". With no more
-  confirmations it decays to 1.5 after ~3 days and drops off. Every "still
-  there" pushes that out.
-- **The same, but flooding.** Shared, but gone after ~10 hours unless
-  someone confirms it again. Floods recede.
-- **Two hikers report it but neither had GPS.** 0.5 + 0.5 = 1.0, so it isn't
-  shared yet. One more on-the-spot hiker makes it shared.
-- **One person reports "bridge out, impassable".** Shared immediately, but
-  labelled "Unconfirmed: 1 report". The next hiker who walks up and taps
-  "Not there" (1.0) takes it down.
-- **Two hikers' flooding reports sync two days late.** Each decayed to 0.25,
+- **Two hikers report a downed tree at the creek.** Not shared: two isn't
+  consensus.
+- **A third hiker confirms it, all with GPS.** 3 hikers and 3.0 ≥ 1.5, so
+  it's shared ("medium"). With no more confirmations it decays to 1.5 after
+  ~1 week and drops off. Every "still there" pushes that out.
+- **The same, but flooding.** Shared, but gone after ~1 day unless someone
+  confirms it again. Floods recede.
+- **Three hikers report it, none with GPS.** 3 hikers but only 1.5, so it's
+  shared only very briefly. One on-the-spot confirmation fixes that.
+- **One person reports "bridge out, impassable".** Not shared until two more
+  hikers back it. A single on-the-spot "Not there" clears it.
+- **Three hikers' flooding reports sync two days late.** Each decayed to 0.25,
   so it isn't shared. The flood is probably gone.
 
 ## On the phone (offline)

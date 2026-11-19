@@ -94,10 +94,10 @@ moderation, duplicate and near-duplicate detection.
 1. **No user accounts.** Contributor and reporter IDs are self-asserted, and
    reviewers share one token. Real auth (e.g. OAuth plus a reviewer role) is
    the biggest missing piece.
-2. **One `impassable` report is shared immediately** by design, labelled
-   unconfirmed, and one on-the-spot "not there" takes it down. Combined with
-   (1) it's still abusable; the per-trail cap and reviewer rejection limit
-   the damage.
+2. **Consensus can be faked with made-up IDs.** A hazard needs 3 different
+   hikers, but until real accounts exist "different" means different
+   self-reported IDs. The per-IP rate limit, the per-trail cap and reviewer
+   rejection limit the damage.
 3. **Everything is in memory.** A restart loses pending items, and
    multiple server instances wouldn't share rate-limit or idempotency state.
 4. **HTTPS** must be terminated by whatever hosts this. The app itself

@@ -11,7 +11,9 @@ import {
 } from '../../src/services/hazardService';
 
 /**
- * Use case: Waze-style hazard verification for hikers. A hiker reports a
+ * Use case: Waze-style hazard verification for hikers. Team rule: nothing is
+ * shared until at least 3 DIFFERENT hikers back it (MIN_DISTINCT_CONFIRMATIONS),
+ * whatever the severity. A hiker reports a
  * hazard (often offline, synced later). It's only shared with other hikers
  * once enough confidence builds up from independent, nearby reports and
  * "still there?" answers. Confidence fades over time, "not there" answers
@@ -68,7 +70,7 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
   const sharedHazards = async () => (await request(app).post(`/trails/${SHADOW_CREEK_TRAIL_ID}/package`)).body.hazards;
 
   describe('building confidence', () => {
-    it('does not share a single ordinary report', async () => {
+    it('does not share a single report', async () => {
       const res = await report('hiker-1');
       expect(res.status).toBe(202);
       expect(res.body.status).toBe('pending_review');
@@ -77,11 +79,13 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
       expect(await sharedHazards()).toHaveLength(0);
     });
 
-    it('shares it once a second hiker on the spot reports the same thing, merged into one hazard', async () => {
+    it('shares it only once three different hikers on the spot report it, merged into one hazard', async () => {
       const first = await report('hiker-1');
       const second = await report('hiker-2', { location: CREEK });
       expect(second.body.incidentId).toBe(first.body.incidentId);
-      expect(second.body.status).toBe('verified');
+      expect(second.body.status).toBe('pending_review'); // two is not consensus
+      const third = await report('hiker-3');
+      expect(third.body.status).toBe('verified');
 
       const hazards = await sharedHazards();
       expect(hazards).toHaveLength(1);
@@ -89,18 +93,19 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
         id: first.body.incidentId,
         hazardType: 'downed_tree',
         waypointId: 'scl-wp1',
-        confirmations: 2,
+        confirmations: 3,
         denials: 0,
         confidenceLevel: 'medium',
         verifiedBy: 'community',
       });
-      expect(hazards[0].confidence).toBeCloseTo(2, 2);
+      expect(hazards[0].confidence).toBeCloseTo(3, 2);
       expect(Date.parse(hazards[0].expiresAt)).toBeGreaterThan(Date.now());
     });
 
-    it('lets a passing hiker confirm with "still there", the same as a second report', async () => {
+    it('lets passing hikers confirm with "still there", the same as more reports', async () => {
       const first = await report('hiker-1');
-      const res = await vote(first.body.incidentId, 'hiker-2', 'still_there');
+      expect((await vote(first.body.incidentId, 'hiker-2', 'still_there')).body.status).toBe('pending_review');
+      const res = await vote(first.body.incidentId, 'hiker-3', 'still_there');
       expect(res.status).toBe(202);
       expect(res.body.status).toBe('verified');
       expect(await sharedHazards()).toHaveLength(1);
@@ -108,9 +113,9 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
 
     it('raises the confidence level as more hikers confirm', async () => {
       const first = await report('hiker-1');
-      for (const h of ['hiker-2', 'hiker-3', 'hiker-4']) await vote(first.body.incidentId, h, 'still_there');
+      for (const h of ['hiker-2', 'hiker-3', 'hiker-4', 'hiker-5']) await vote(first.body.incidentId, h, 'still_there');
       const [hazard] = await sharedHazards();
-      expect(hazard.confirmations).toBe(4);
+      expect(hazard.confirmations).toBe(5);
       expect(hazard.confidenceLevel).toBe('high');
     });
 
@@ -159,15 +164,18 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
     });
   });
 
-  describe('severe hazards (asymmetric risk)', () => {
-    it('shares an impassable report right away, but as a low-confidence warning', async () => {
-      const res = await report('hiker-1', { severity: 'impassable', hazardType: 'bridge_out' });
-      expect(res.body.status).toBe('verified');
+  describe('severe hazards', () => {
+    it('does not let one person put even an "impassable" hazard on everyone\'s map', async () => {
+      const bridgeOut = { severity: 'impassable', hazardType: 'bridge_out' };
+      expect((await report('hiker-1', bridgeOut)).body.status).toBe('pending_review');
+      expect((await report('hiker-2', bridgeOut)).body.status).toBe('pending_review');
+      expect(await sharedHazards()).toHaveLength(0);
+      expect((await report('hiker-3', bridgeOut)).body.status).toBe('verified');
       const [hazard] = await sharedHazards();
-      expect(hazard).toMatchObject({ severity: 'impassable', confidenceLevel: 'low', verifiedBy: 'urgent_report' });
+      expect(hazard).toMatchObject({ severity: 'impassable', confirmations: 3, verifiedBy: 'community' });
     });
 
-    it('takes an unconfirmed impassable warning down after one on-the-spot "not there"', async () => {
+    it('lets one on-the-spot "not there" clear a single unconfirmed impassable report', async () => {
       const res = await report('hiker-1', { severity: 'impassable', hazardType: 'bridge_out', location: undefined, waypointHintId: 'scl-wp1' });
       const denied = await vote(res.body.incidentId, 'hiker-2', 'not_there', { location: CREEK });
       expect(denied.body.status).toBe('resolved');
@@ -178,6 +186,7 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
       await report('hiker-1', { severity: 'moderate' });
       await report('hiker-2', { severity: 'moderate' });
       await report('hiker-3', { severity: 'impassable' });
+      await report('hiker-4', { severity: 'impassable' });
       const [hazard] = await sharedHazards();
       expect(hazard.severity).toBe('moderate');
     });
@@ -187,26 +196,28 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
     it('clears a shared hazard once enough hikers say it is gone', async () => {
       const first = await report('hiker-1');
       await report('hiker-2');
+      await report('hiker-3');
       expect(await sharedHazards()).toHaveLength(1);
 
-      await vote(first.body.incidentId, 'hiker-3', 'not_there');
-      expect(await sharedHazards()).toHaveLength(0); // 2 - 1 = 1 < 1.5: no longer confident enough to share
-      const res = await vote(first.body.incidentId, 'hiker-4', 'not_there');
+      await vote(first.body.incidentId, 'hiker-4', 'not_there');
+      expect(await sharedHazards()).toHaveLength(1); // 3 - 1 = 2, still above 1.5
+      await vote(first.body.incidentId, 'hiker-5', 'not_there');
+      expect(await sharedHazards()).toHaveLength(0); // 3 - 2 = 1 < 1.5: no longer confident enough
+      const res = await vote(first.body.incidentId, 'hiker-6', 'not_there');
       expect(res.body.status).toBe('resolved');
     });
 
     it('fades a shared hazard out if nobody re-confirms it, faster for short-lived hazard types', async () => {
       const t0 = Date.now();
-      await report('hiker-1', { hazardType: 'flooding' });
-      await report('hiker-2', { hazardType: 'flooding' });
-      await report('hiker-1', { hazardType: 'downed_tree' });
-      await report('hiker-2', { hazardType: 'downed_tree' });
+      for (const type of ['flooding', 'downed_tree']) {
+        for (const h of ['hiker-1', 'hiker-2', 'hiker-3']) await report(h, { hazardType: type });
+      }
 
       const typesAt = (hoursLater: number) =>
         getVerifiedHazardsForTrail(SHADOW_CREEK_TRAIL_ID, t0 + hoursLater * HOUR).map((h) => h.hazardType).sort();
       expect(typesAt(0)).toEqual(['downed_tree', 'flooding']);
-      expect(typesAt(12)).toEqual(['downed_tree']); // flooding half-life 1 day: gone after ~10h
-      expect(typesAt(24 * 4)).toEqual([]); // downed tree half-life 7 days: gone after ~3 days
+      expect(typesAt(30)).toEqual(['downed_tree']); // flooding half-life 1 day: gone after ~1 day
+      expect(typesAt(24 * 8)).toEqual([]); // downed tree half-life 7 days: gone after ~1 week
 
       const flooding = listIncidentsForTrail(SHADOW_CREEK_TRAIL_ID, t0 + 4 * 24 * HOUR).find((i) => i.hazardType === 'flooding');
       expect(flooding?.status).toBe('expired');
@@ -214,8 +225,7 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
 
     it('ships an expiresAt that matches when it actually stops being shared', async () => {
       const t0 = Date.now();
-      await report('hiker-1', { hazardType: 'flooding' });
-      await report('hiker-2', { hazardType: 'flooding' });
+      for (const h of ['hiker-1', 'hiker-2', 'hiker-3']) await report(h, { hazardType: 'flooding' });
       const [hazard] = getVerifiedHazardsForTrail(SHADOW_CREEK_TRAIL_ID, t0);
       const expires = Date.parse(hazard.expiresAt);
       expect(getVerifiedHazardsForTrail(SHADOW_CREEK_TRAIL_ID, expires - 60_000)).toHaveLength(1);
@@ -225,8 +235,9 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
     it('decays by when the hiker SAW it, not when their phone synced', async () => {
       const twoDaysAgo = new Date(Date.now() - 48 * HOUR).toISOString();
       await report('hiker-1', { hazardType: 'flooding', reportedAt: twoDaysAgo });
-      const late = await report('hiker-2', { hazardType: 'flooding', reportedAt: twoDaysAgo });
-      expect(late.body.status).not.toBe('verified'); // two 2-day-old flooding sightings are stale
+      await report('hiker-2', { hazardType: 'flooding', reportedAt: twoDaysAgo });
+      const late = await report('hiker-3', { hazardType: 'flooding', reportedAt: twoDaysAgo });
+      expect(late.body.status).not.toBe('verified'); // three 2-day-old flooding sightings are stale
     });
 
     it('lets "still there" keep a hazard alive', async () => {
@@ -302,11 +313,16 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
     it('raises a reporter\'s trust when other hikers independently confirm their report', async () => {
       await report('hiker-1');
       await report('hiker-2');
+      expect(getTrust('hiker-1')).toBe(TRUST_DEFAULT); // not shared yet, so no reward yet
+      await report('hiker-3');
       expect(getTrust('hiker-1')).toBeGreaterThan(TRUST_DEFAULT);
     });
 
     it('lets a reviewer reject a false hazard: it is never shared again and vouching for it costs trust', async () => {
-      const first = await report('troll-1', { severity: 'impassable', hazardType: 'bridge_out' });
+      const fake = { severity: 'impassable', hazardType: 'bridge_out' };
+      const first = await report('troll-1', fake);
+      await report('troll-2', fake);
+      await report('troll-3', fake);
       expect(await sharedHazards()).toHaveLength(1);
 
       const res = await request(app).post(`/hazards/${first.body.incidentId}/reject`).set(auth);
@@ -316,7 +332,7 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
       expect(getTrust('troll-1')).toBeLessThan(TRUST_DEFAULT);
 
       // Further votes on a rejected hazard are refused.
-      expect((await vote(first.body.incidentId, 'troll-2', 'still_there')).status).toBe(409);
+      expect((await vote(first.body.incidentId, 'troll-4', 'still_there')).status).toBe(409);
     });
 
     it('lets a reviewer verify a report (e.g. a ranger confirmed it), which hikers can still outvote later', async () => {
@@ -329,6 +345,8 @@ describe('Use case: hazards are verified by hikers before they are shared (Waze-
     it('lets a reviewer mark a hazard resolved', async () => {
       const first = await report('hiker-1');
       await report('hiker-2');
+      await report('hiker-3');
+      expect(await sharedHazards()).toHaveLength(1);
       await request(app).post(`/hazards/${first.body.incidentId}/resolve`).set(auth);
       expect(await sharedHazards()).toHaveLength(0);
     });

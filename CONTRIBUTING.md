@@ -6,9 +6,13 @@ we're headed.
 
 ## Where the code lives
 
-The repo belongs to a **GitHub Organization** for the team, not to any one
-person's account, so nobody's account is a single point of failure and
-anyone can leave the team without taking the project with them.
+**Current setup:** the repo lives on the project lead's personal GitHub
+account, and the lead is the release owner (see `ROADMAP.md`). Classmates
+send changes (as pull requests, or as files via SharePoint), and the lead
+reviews them with `npm run changes` and the changelog before deciding which
+release they go in. If the project outlives the class, move it to a GitHub
+Organization (free; Settings → Transfer) so it doesn't depend on one account.
+The steps below are for that later move.
 
 One-time setup (whoever does it):
 

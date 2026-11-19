@@ -5,7 +5,7 @@ import { createApp } from '../../src/app';
 import { SHADOW_CREEK_TRAIL_ID } from '../../src/data/fixtures';
 import { makeImage, makeImageBase64 } from '../helpers/images';
 import { _resetForTests as resetContributions, listPendingForTrail } from '../../src/services/contributionService';
-import { _resetForTests as resetHazards } from '../../src/services/hazardService';
+import { _resetForTests as resetHazards, listIncidentsForTrail } from '../../src/services/hazardService';
 import { _resetForTests as resetPhotos } from '../../src/services/landmarkPhotoService';
 import { OUTPUT_MAX_DIMENSION } from '../../src/validation/imageValidation';
 
@@ -223,10 +223,17 @@ describe('Use case: the system resists malicious or accidental abuse', () => {
       expect(retry.body).toEqual(first.body);
       expect(listPendingForTrail(SHADOW_CREEK_TRAIL_ID)).toHaveLength(1);
 
-      const urgent = hazard({ id: 'retry-h', severity: 'impassable', hazardType: 'bridge_out' });
-      await postHazard(urgent);
-      await postHazard(urgent);
-      expect((await pkg()).body.hazards).toHaveLength(1);
+      // Ironhide: BUG-007. Under the consensus rule a single report is never
+      // shared, so check the underlying state instead: a resent report must
+      // not create a second hazard. (It has no position, so without the
+      // idempotency check each copy would become its own incident.)
+      const report = hazard({ id: 'retry-h', severity: 'impassable', hazardType: 'bridge_out' });
+      const h1 = await postHazard(report);
+      const h2 = await postHazard(report);
+      expect(h1.status).toBe(202);
+      expect(h2.status).toBe(200);
+      expect(h2.body).toEqual(h1.body);
+      expect(listIncidentsForTrail(SHADOW_CREEK_TRAIL_ID)).toHaveLength(1);
     });
   });
 

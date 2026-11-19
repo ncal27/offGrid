@@ -29,6 +29,9 @@ differs from the last release.
 ### Added
 
 ### Changed
+- Hazards now need at least 3 different hikers (report or "still there") before they're shared with anyone, for every severity. Impassable reports are no longer shared after a single report. Team decision so one person can't put a hazard on everyone's map. (Team, Claude Code, 2026-11-19)
+- Hazard confidence labels: "low" now means fading or mostly-without-GPS ("may be outdated") rather than "unconfirmed". (Team, Claude Code, 2026-11-19)
+- ROADMAP.md: recorded team decisions and a plan to a working demo the week of Dec 2 and the final project on Dec 9. (Team, Claude Code, 2026-11-19)
 
 ### Fixed
 

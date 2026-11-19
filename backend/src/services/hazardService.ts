@@ -45,11 +45,11 @@ import { haversineDistanceMeters } from '../geo';
  *    hiker SAW it (observedAt), not when their phone synced. Flooding goes
  *    stale in a day; a collapsed bridge doesn't.
  *
- * The incident is SHARED (shipped in trip packages as 'verified') while
- * confidence ≥ SHARE_THRESHOLD[severity]. Worse hazards need less proof
- * (asymmetric risk: a missed "bridge out" warning costs far more than a stale
- * one), but they start at 'low' confidence so the app can label them
- * "unconfirmed", and a single "not there" can take them down again.
+ * The incident is SHARED (shipped in trip packages as 'verified') once at
+ * least MIN_DISTINCT_CONFIRMATIONS different hikers back it AND confidence ≥
+ * SHARE_THRESHOLD[severity]. The consensus rule applies to every severity,
+ * impassable included: the team chose "never one person's word" over
+ * showing severe hazards instantly (ROADMAP.md, 2026-11-19).
  * Confidence ≤ 0 with at least one "not there" means RESOLVED. If nobody has
  * confirmed it for EXPIRE_AFTER_HALF_LIVES half-lives it's EXPIRED.
  *
@@ -72,16 +72,29 @@ const WEIGHT_NEAR = 1.0;
 const WEIGHT_UNVERIFIED_POSITION = 0.5;
 
 /**
- * Thresholds sit BELOW what fresh votes add up to, so a shared hazard stays
- * up for a while before it needs re-confirming. Two on-the-spot hikers give
- * 2.0, which stays above 1.5 for log2(2/1.5) ≈ 0.4 half-lives: ~3 days for a
- * downed tree, ~10 hours for flooding. Each "still there" pushes that out.
+ * Consensus rule (team decision 2026-11-19, see ROADMAP.md): no hazard is
+ * shown to other hikers until at least this many DIFFERENT hikers have
+ * reported it or said "still there". This applies to every severity,
+ * including impassable, so one person can never put a hazard on everyone's
+ * map. A reviewer's verification stands in for it.
+ */
+export const MIN_DISTINCT_CONFIRMATIONS = 3;
+
+/**
+ * On top of the head count, confidence (which accounts for GPS proximity,
+ * trust and age) must clear this. Three on-the-spot hikers give 3.0, which
+ * stays above 1.5 for one half-life (~1 week for a downed tree, ~1 day for
+ * flooding) unless re-confirmed. Three hikers WITHOUT GPS only give 1.5, so
+ * they're shared only briefly; at least one GPS confirmation helps a lot.
+ * The per-severity table is kept so it can be tuned separately later; it is
+ * uniform for now because the team chose consensus over speed for severe
+ * hazards.
  */
 export const SHARE_THRESHOLD: Record<HazardSeverity, number> = {
-  minor: 1.5, // two hikers on the spot, or one on the spot + one without GPS
+  minor: 1.5,
   moderate: 1.5,
-  severe: 1.25, // same, a little easier
-  impassable: 0.4, // any single report, shipped as an unconfirmed/low-confidence warning
+  severe: 1.5,
+  impassable: 1.5,
 };
 
 export const HALF_LIFE_HOURS: Record<HazardType, number> = {
@@ -271,23 +284,23 @@ function assess(incident: Incident, now: number): IncidentAssessment {
 
   let status: HazardReportStatus;
   if (incident.reviewerAction) status = incident.reviewerAction;
-  else if (confidence >= threshold) status = 'verified';
+  else if (confidence >= threshold && (confirmations >= MIN_DISTINCT_CONFIRMATIONS || reviewerVouched)) {
+    status = 'verified';
+  }
   else if (denials > 0 && confidence <= 0) status = 'resolved';
   else if (now - lastConfirmedAt > EXPIRE_AFTER_HALF_LIVES * halfLifeMs) status = 'expired';
   else status = 'pending_review';
 
+  // low: barely above the bar (fading, or confirmed mostly without GPS)
+  // medium: comfortably above it; high: well above it AND 5+ hikers.
   const confidenceLevel: HazardConfidenceLevel =
-    confirmations >= 3 && confidence >= 2 * threshold && confidence >= 3
+    confirmations >= 5 && confidence >= 2 * threshold
       ? 'high'
-      : confirmations >= 2 && confidence >= 2
+      : confidence >= 2 * threshold
         ? 'medium'
         : 'low';
 
-  const verifiedBy: HazardReport['verifiedBy'] = reviewerVouched
-    ? 'reviewer'
-    : confirmations >= 2 && confidence >= SHARE_THRESHOLD.moderate
-      ? 'community'
-      : 'urgent_report';
+  const verifiedBy: HazardReport['verifiedBy'] = reviewerVouched ? 'reviewer' : 'community';
 
   return { status, confidence, confidenceLevel, severity, threshold, confirmations, denials, lastConfirmedAt, expiresAt, verifiedBy };
 }
@@ -374,13 +387,11 @@ export function canAcceptMoreHazardReports(trailId: string, reporterId: string, 
 
 function ackMessage(a: IncidentAssessment, merged: boolean): string {
   if (a.status === 'verified') {
-    return a.verifiedBy === 'urgent_report' && a.confirmations < 2
-      ? 'Shared right away as an unconfirmed warning because of its severity. Other hikers will be asked to confirm it.'
-      : `Shared with other hikers (${a.confirmations} hiker${a.confirmations === 1 ? '' : 's'} confirmed it).`;
+    return `Shared with other hikers (${a.confirmations} hikers confirmed it).`;
   }
   return merged
     ? 'Thanks. Added as a confirmation of a hazard other hikers already reported here.'
-    : 'Received. It will be shared with other hikers once someone else confirms it.';
+    : `Received. It will be shared with other hikers once ${MIN_DISTINCT_CONFIRMATIONS} hikers have confirmed it.`;
 }
 
 /**
