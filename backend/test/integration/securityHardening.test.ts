@@ -200,10 +200,14 @@ describe('Use case: the system resists malicious or accidental abuse', () => {
     });
 
     it('does not let two location-less hazard reports "corroborate" each other (BUG-014)', async () => {
-      await postHazard(hazard({ reporterId: 'a' }));
+      // Ironhide: BUG-014. Single reports are now shared (at very low
+      // confidence), so the guard is that position-less reports never merge
+      // into one hazard that looks confirmed by 2 hikers.
+      const first = await postHazard(hazard({ reporterId: 'a' }));
       const second = await postHazard(hazard({ reporterId: 'b' }));
-      expect(second.body.status).toBe('pending_review');
-      expect((await pkg()).body.hazards).toHaveLength(0);
+      expect(second.body.incidentId).not.toBe(first.body.incidentId);
+      const hazards = (await pkg()).body.hazards;
+      expect(hazards.every((h: { confirmations: number }) => h.confirmations === 1)).toBe(true);
     });
   });
 

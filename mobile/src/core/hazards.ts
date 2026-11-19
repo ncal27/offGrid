@@ -20,11 +20,16 @@ export function hazardPosition(hazard: HazardReport, trail: Trail): LatLng | und
   return trail.waypoints.find((wp) => wp.id === hazard.waypointId)?.location;
 }
 
-/** Short label a UI can show next to a hazard, e.g. "Confirmed by 4 hikers" or "Reported by 3 hikers · may be outdated". */
+const TIER_NAMES: Record<HazardReport['confidenceLevel'], string> = {
+  very_low: 'Very low confidence',
+  low: 'Low confidence',
+  medium: 'Medium confidence',
+  high: 'High confidence',
+};
+
+/** Short label a UI can show next to a hazard, e.g. "Very low confidence · 1 report". */
 export function hazardConfidenceLabel(hazard: HazardReport): string {
   if (hazard.verifiedBy === 'reviewer') return 'Confirmed by a ranger/reviewer';
-  if (hazard.confidenceLevel === 'low') {
-    return `Reported by ${hazard.confirmations} hikers · may be outdated`;
-  }
-  return `Confirmed by ${hazard.confirmations} hikers`;
+  const n = hazard.confirmations;
+  return `${TIER_NAMES[hazard.confidenceLevel]} · ${n} ${n === 1 ? 'report' : 'hikers'}`;
 }

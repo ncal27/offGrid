@@ -45,11 +45,10 @@ import { haversineDistanceMeters } from '../geo';
  *    hiker SAW it (observedAt), not when their phone synced. Flooding goes
  *    stale in a day; a collapsed bridge doesn't.
  *
- * The incident is SHARED (shipped in trip packages as 'verified') once at
- * least MIN_DISTINCT_CONFIRMATIONS different hikers back it AND confidence ≥
- * SHARE_THRESHOLD[severity]. The consensus rule applies to every severity,
- * impassable included: the team chose "never one person's word" over
- * showing severe hazards instantly (ROADMAP.md, 2026-11-19).
+ * The incident is SHARED (shipped in trip packages as 'verified') from the
+ * first report, as long as confidence ≥ SHARE_THRESHOLD[severity], and is
+ * labelled with a confidence tier (very low / low / medium / high) so the
+ * app can show how much to trust it (ROADMAP.md, 2026-11-19).
  * Confidence ≤ 0 with at least one "not there" means RESOLVED. If nobody has
  * confirmed it for EXPIRE_AFTER_HALF_LIVES half-lives it's EXPIRED.
  *
@@ -65,37 +64,47 @@ import { haversineDistanceMeters } from '../geo';
 
 // ---- Tunable policy -------------------------------------------------------
 
-export const CLUSTER_RADIUS_METERS = 75;
+/** Same hazard type reported within ~200 feet = the same hazard (team decision 2026-11-19). */
+export const CLUSTER_RADIUS_METERS = 61;
 export const VOTE_NEAR_METERS = 150;
 export const VOTE_MAX_METERS = 500;
 const WEIGHT_NEAR = 1.0;
 const WEIGHT_UNVERIFIED_POSITION = 0.5;
 
 /**
- * Consensus rule (team decision 2026-11-19, see ROADMAP.md): no hazard is
- * shown to other hikers until at least this many DIFFERENT hikers have
- * reported it or said "still there". This applies to every severity,
- * including impassable, so one person can never put a hazard on everyone's
- * map. A reviewer's verification stands in for it.
+ * Team decision (2026-11-19, revised): a hazard is shared from the FIRST
+ * report, but labelled by how confident we are (see CONFIDENCE_TIERS), so
+ * hikers can judge a single unconfirmed report for themselves.
  */
-export const MIN_DISTINCT_CONFIRMATIONS = 3;
+export const MIN_DISTINCT_CONFIRMATIONS = 1;
 
 /**
- * On top of the head count, confidence (which accounts for GPS proximity,
- * trust and age) must clear this. Three on-the-spot hikers give 3.0, which
- * stays above 1.5 for one half-life (~1 week for a downed tree, ~1 day for
- * flooding) unless re-confirmed. Three hikers WITHOUT GPS only give 1.5, so
- * they're shared only briefly; at least one GPS confirmation helps a lot.
- * The per-severity table is kept so it can be tuned separately later; it is
- * uniform for now because the team chose consensus over speed for severe
- * hazards.
+ * Shared while confidence is at least this. Low enough that one report
+ * without GPS (0.5) is shown, for one half-life, and one on-the-spot report
+ * (1.0) for two half-lives. A single on-the-spot "not there" cancels one
+ * report. Per-severity table kept so severities can be tuned separately.
  */
 export const SHARE_THRESHOLD: Record<HazardSeverity, number> = {
-  minor: 1.5,
-  moderate: 1.5,
-  severe: 1.5,
-  impassable: 1.5,
+  minor: 0.25,
+  moderate: 0.25,
+  severe: 0.25,
+  impassable: 0.25,
 };
+
+/**
+ * Confidence tiers (team decision 2026-11-19). Confidence works like a head
+ * count: an on-the-spot hiker with GPS counts 1, a hiker without GPS counts ½,
+ * each "not there" subtracts, and everything fades over time. So the tiers
+ * read as "roughly how many hikers back this right now":
+ *   very low: under 3 (1-2 hikers)   low: 3 to under 5
+ *   medium:   5 to under 10          high: 10 or more
+ */
+export const CONFIDENCE_TIERS: { level: HazardConfidenceLevel; min: number }[] = [
+  { level: 'high', min: 10 },
+  { level: 'medium', min: 5 },
+  { level: 'low', min: 3 },
+  { level: 'very_low', min: 0 },
+];
 
 export const HALF_LIFE_HOURS: Record<HazardType, number> = {
   flooding: 24,
@@ -271,7 +280,11 @@ function assess(incident: Incident, now: number): IncidentAssessment {
     }
   }
 
-  const confidence = Math.round((support - against) * 1000) / 1000;
+  // Decisions use the exact score; only the reported value is rounded.
+  // Rounding first let a hazard at 0.2499 count as 0.25 and stay shared past
+  // its own expiresAt (BUG-017).
+  const raw = support - against;
+  const confidence = Math.round(raw * 1000) / 1000;
   const severity = incidentSeverity(incident);
   const threshold = SHARE_THRESHOLD[severity];
   const halfLifeMs = HALF_LIFE_HOURS[incident.hazardType] * HOUR_MS;
@@ -280,25 +293,21 @@ function assess(incident: Incident, now: number): IncidentAssessment {
   // confidence(t) = confidence(now) · 0.5^((t − now) / halfLife), so the moment
   // it crosses the threshold has a closed form.
   const expiresAt =
-    confidence >= threshold ? now + halfLifeMs * Math.log2(confidence / threshold) : now;
+    raw >= threshold ? now + halfLifeMs * Math.log2(raw / threshold) : now;
 
   let status: HazardReportStatus;
   if (incident.reviewerAction) status = incident.reviewerAction;
-  else if (confidence >= threshold && (confirmations >= MIN_DISTINCT_CONFIRMATIONS || reviewerVouched)) {
+  else if (raw >= threshold && (confirmations >= MIN_DISTINCT_CONFIRMATIONS || reviewerVouched)) {
     status = 'verified';
   }
   else if (denials > 0 && confidence <= 0) status = 'resolved';
   else if (now - lastConfirmedAt > EXPIRE_AFTER_HALF_LIVES * halfLifeMs) status = 'expired';
   else status = 'pending_review';
 
-  // low: barely above the bar (fading, or confirmed mostly without GPS)
-  // medium: comfortably above it; high: well above it AND 5+ hikers.
   const confidenceLevel: HazardConfidenceLevel =
-    confirmations >= 5 && confidence >= 2 * threshold
-      ? 'high'
-      : confidence >= 2 * threshold
-        ? 'medium'
-        : 'low';
+    // Tier is a label, so it uses the same rounded score the app displays
+    // (otherwise milliseconds of decay turn 3 hikers into 2.99999 = "very low").
+    CONFIDENCE_TIERS.find((t) => confidence >= t.min)?.level ?? 'very_low';
 
   const verifiedBy: HazardReport['verifiedBy'] = reviewerVouched ? 'reviewer' : 'community';
 
@@ -387,7 +396,9 @@ export function canAcceptMoreHazardReports(trailId: string, reporterId: string, 
 
 function ackMessage(a: IncidentAssessment, merged: boolean): string {
   if (a.status === 'verified') {
-    return `Shared with other hikers (${a.confirmations} hikers confirmed it).`;
+    return a.confirmations === 1
+      ? 'Shared with other hikers as an unconfirmed report. Others will be asked to confirm it.'
+      : `Shared with other hikers (${a.confirmations} hikers, ${a.confidenceLevel.replace('_', ' ')} confidence).`;
   }
   return merged
     ? 'Thanks. Added as a confirmation of a hazard other hikers already reported here.'

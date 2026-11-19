@@ -29,11 +29,13 @@ differs from the last release.
 ### Added
 
 ### Changed
-- Hazards now need at least 3 different hikers (report or "still there") before they're shared with anyone, for every severity. Impassable reports are no longer shared after a single report. Team decision so one person can't put a hazard on everyone's map. (Team, Claude Code, 2026-11-19)
-- Hazard confidence labels: "low" now means fading or mostly-without-GPS ("may be outdated") rather than "unconfirmed". (Team, Claude Code, 2026-11-19)
+- Hazards are shown from the first report with a confidence tier: very low (<3), low (3–<5), medium (5–<10), high (10+), counting an on-the-spot GPS report as 1 and a no-GPS report as ½, minus "not there" answers, fading over time. Replaces the short-lived "3 hikers before anything is shown" rule. (Team, Claude Code, 2026-11-19)
+- Reports of the same hazard type within ~200 ft (61m, was 75m) are treated as the same hazard. (Team, Claude Code, 2026-11-19)
+- App label now shows the tier, e.g. "Very low confidence · 1 report". (Team, Claude Code, 2026-11-19)
 - ROADMAP.md: recorded team decisions and a plan to a working demo the week of Dec 2 and the final project on Dec 9. (Team, Claude Code, 2026-11-19)
 
 ### Fixed
+- BUG-017: hazards could stay shared past their own expiry time because the score was rounded before comparing with the threshold. Regression test added (Ironhide). (Team, Claude Code, 2026-11-19)
 
 ### Removed
 
@@ -56,6 +58,7 @@ The baseline. Everything after this is tracked against it
 - Team docs: `CONTRIBUTING.md`, `AGENTS.md`, `ROADMAP.md`, the Ironhide protocol.
 
 ### Fixed
+- BUG-017: hazards could stay shared past their own expiry time because the score was rounded before comparing with the threshold. Regression test added (Ironhide). (Team, Claude Code, 2026-11-19)
 - BUG-001 to BUG-016. Details and the regression test guarding each are in `docs/BUGS.md` (Ironhide protocol).
 
 [Unreleased]: #unreleased

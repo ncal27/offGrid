@@ -83,7 +83,9 @@ package until promoted/verified.
 **Waze-style confidence model**: reports merge into incidents, hikers vote
 "still there"/"not there" (`POST /hazards/votes`), each vote is weighted by
 GPS proximity × reporter trust × time decay (half-life per hazard type), and
-an incident ships only while its confidence clears a per-severity threshold.
+an incident ships from the first report while its confidence clears a small
+threshold, labelled with a tier (very low <3, low 3–<5, medium 5–<10, high
+10+). Same hazard type within ~200 ft (61m) = same incident.
 **Read `docs/HAZARD_VERIFICATION.md` before changing any of it.** Every
 number there is a tunable guess, not settled design. Waypoint resolution is shared in
 `services/waypointResolution.ts`: a hint must be a waypoint on that trail

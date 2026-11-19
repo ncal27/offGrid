@@ -20,21 +20,31 @@ Sources: [Waze Help: Report road hazards](https://support.google.com/waze/answer
 
 ## What's different for hikers
 
-**Team rule (2026-11-19): no hazard is shown to other hikers until at least
-3 different hikers back it, whatever its severity.** One person can never put
-a hazard on everyone's map. Change `MIN_DISTINCT_CONFIRMATIONS` in
-`hazardService.ts` to raise it (e.g. to 5).
+**Team rules (2026-11-19):** a hazard is shown from the **first report**, labelled
+with a **confidence tier** that rises as more hikers back it. Reports of the
+same hazard type within **~200 feet (61m)** are treated as the same hazard.
+
+| Tier | Confidence (≈ hikers backing it now) |
+| --- | --- |
+| Very low | under 3 (1–2 hikers) |
+| Low | 3 to under 5 |
+| Medium | 5 to under 10 |
+| High | 10 or more |
+
+Confidence counts an on-the-spot hiker with GPS as **1** and a hiker without
+GPS as **½**. Each "not there" subtracts, and everything fades over time, so
+a hazard can drop tiers if nobody re-confirms it.
 
 | Waze (drivers) | OffGrid (hikers) |
 | --- | --- |
 | Always online; answers arrive instantly | Usually offline. Answers are queued on the phone and synced later, so **decay is measured from when the hiker saw it**, not when it synced |
 | Lots of traffic: many confirmations | Few people per trail: thresholds are low (≈ 2 hikers) |
-| A wrong report wastes a few minutes | A wrong "bridge out" turns people around. We chose consensus (3 hikers) over speed, even for severe hazards |
+| A wrong report wastes a few minutes | A wrong "bridge out" turns people around. Every hazard is shown with its confidence tier so hikers can judge a single report for themselves |
 
 ## How a report becomes a shared hazard
 
 1. **Reports merge into incidents.** A report on the same trail, of the same
-   hazard type, within **75m** of an open incident joins it. A report with
+   hazard type, within **61m (~200 ft)** of an open incident joins it. A report with
    no position at all (no GPS, no waypoint) never merges with anything.
 2. **One voice per hiker.** A report counts as that hiker saying "still
    there". Each hiker's latest answer replaces their earlier one, and a hiker
@@ -59,16 +69,10 @@ a hazard on everyone's map. Change `MIN_DISTINCT_CONFIRMATIONS` in
      | bridge_out | 30 days |
 
 4. **Confidence** = sum of "still there" weights − sum of "not there" weights.
-5. **Shared** (shipped in trip packages) only when BOTH:
-   - at least **3 different hikers** have reported it or said "still there"
-     (a reviewer's verification also counts), and
-   - confidence ≥ **1.5**, the same for every severity. Three on-the-spot hikers
-     give 3.0, which stays shared for one half-life unless re-confirmed. Three
-     hikers without GPS give only 1.5, so it's shared only briefly.
-
-   Confidence level shipped to the app: **low** when barely above the bar
-   (fading, or confirmed mostly without GPS: "may be outdated"), **medium**
-   at 2× the bar, **high** at 2× the bar with 5+ hikers.
+5. **Shared** (shipped in trip packages) from the first report, while
+   confidence ≥ **0.25**. One on-the-spot report lasts about 2 half-lives,
+   and one report without GPS about 1, unless re-confirmed. The tier (table
+   above) ships with it.
 
    An incident's severity is what most of its reporters said (ties go to the
    less severe option), so one person can't escalate a "moderate" to
@@ -80,25 +84,25 @@ a hazard on everyone's map. Change `MIN_DISTINCT_CONFIRMATIONS` in
 
 ## Worked examples
 
-- **Two hikers report a downed tree at the creek.** Not shared: two isn't
-  consensus.
-- **A third hiker confirms it, all with GPS.** 3 hikers and 3.0 ≥ 1.5, so
-  it's shared ("medium"). With no more confirmations it decays to 1.5 after
-  ~1 week and drops off. Every "still there" pushes that out.
-- **The same, but flooding.** Shared, but gone after ~1 day unless someone
-  confirms it again. Floods recede.
-- **Three hikers report it, none with GPS.** 3 hikers but only 1.5, so it's
-  shared only very briefly. One on-the-spot confirmation fixes that.
-- **One person reports "bridge out, impassable".** Not shared until two more
-  hikers back it. A single on-the-spot "Not there" clears it.
-- **Three hikers' flooding reports sync two days late.** Each decayed to 0.25,
-  so it isn't shared. The flood is probably gone.
+- **One hiker reports a downed tree at the creek (with GPS).** Shown right
+  away: "Very low confidence · 1 report". It fades out after ~2 weeks unless
+  someone confirms it.
+- **Three hikers have confirmed it.** "Low confidence · 3 hikers". At 5,
+  medium; at 10, high.
+- **Six hikers report it, none with GPS.** 6 × ½ = 3, so "low", where six
+  on-the-spot hikers would be "medium".
+- **Someone reports a flood.** Shown, but gone after ~2 days unless someone
+  confirms it. Floods recede.
+- **One person reports "bridge out, impassable".** Shown at very low
+  confidence. The next hiker on the spot who taps "Not there" cancels it.
+- **A 10-hiker "high" hazard nobody has re-confirmed for a week** (downed
+  tree) has faded to about 5: "medium", then "low".
 
 ## On the phone (offline)
 
 - Every shared hazard ships with `confidence`, `confidenceLevel`,
   `confirmations`, `denials`, `lastConfirmedAt`, `expiresAt` and `verifiedBy`.
-  `hazardConfidenceLabel()` turns that into text like "Confirmed by 4 hikers".
+  `hazardConfidenceLabel()` turns that into text like "Very low confidence · 1 report" or "High confidence · 12 hikers".
 - `OfflineNavigator` (given `hazards` from the package) emits
   `approaching_hazard` once per hazard within 150m. That's the UI's cue to
   warn the hiker and ask "Still there?".

@@ -121,11 +121,13 @@ describe('Use case: confirming hazards on the trail, offline', () => {
     await expect(queue.enqueue(base)).resolves.toBeUndefined();
   });
 
-  it('labels fading or low-confidence warnings so hikers can judge them', () => {
-    expect(hazardConfidenceLabel(downedTree({ confidenceLevel: 'low', confirmations: 3 }))).toBe(
-      'Reported by 3 hikers · may be outdated',
+  it('labels each hazard with its confidence tier so hikers can judge it', () => {
+    expect(hazardConfidenceLabel(downedTree({ confidenceLevel: 'very_low', confirmations: 1 }))).toBe(
+      'Very low confidence · 1 report',
     );
-    expect(hazardConfidenceLabel(downedTree({ confirmations: 4, confidenceLevel: 'high' }))).toBe('Confirmed by 4 hikers');
+    expect(hazardConfidenceLabel(downedTree({ confidenceLevel: 'low', confirmations: 4 }))).toBe('Low confidence · 4 hikers');
+    expect(hazardConfidenceLabel(downedTree({ confidenceLevel: 'high', confirmations: 12 }))).toBe('High confidence · 12 hikers');
     expect(hazardConfidenceLabel(downedTree({ verifiedBy: 'reviewer' }))).toBe('Confirmed by a ranger/reviewer');
   });
+
 });

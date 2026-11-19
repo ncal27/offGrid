@@ -22,6 +22,7 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 | BUG-005 – BUG-010, BUG-014, BUG-015 | `backend/test/integration/securityHardening.test.ts` |
 | BUG-011 – BUG-013 | `mobile/test/integration/untrustedInput.test.ts` |
 | BUG-016 | `securityHardening.test.ts` ("internal failures are reported honestly"), shown to fail with the bug reintroduced |
+| BUG-017 | `hazardReporting.test.ts` ("ships an expiresAt that matches when it actually stops being shared"), shown to fail with the bug reintroduced |
 
 ## Review log
 
@@ -37,6 +38,22 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 _None currently._
 
 ## Fixed
+
+### BUG-017 — hazards stayed shared after their own expiry time (rounding before comparing)
+
+- **Severity:** Low/Medium (stale hazard warnings shown past `expiresAt`).
+- **Where:** `assess()` in `backend/src/services/hazardService.ts`.
+- **What happened:** The confidence score was rounded to 3 decimals *before*
+  being compared with the sharing threshold. A hazard whose real score had
+  decayed to 0.2499 was rounded to 0.25, passed the 0.25 threshold, and
+  stayed in trip packages after the `expiresAt` it shipped with. The bug was
+  latent under the earlier thresholds and surfaced when the threshold was
+  lowered to 0.25 for the confidence-tier model.
+- **Fix:** Sharing, expiry and resolution use the exact score; only the
+  reported value (and the displayed tier) is rounded.
+- **How it was caught:** The existing "expiresAt matches when it stops being
+  shared" test failed after the threshold change (Ironhide: it now guards
+  this bug, and was shown to fail with the bug reintroduced).
 
 ### BUG-004 — any large photo upload crashed the endpoint with a 500 (regex stack overflow)
 

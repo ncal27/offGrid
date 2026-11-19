@@ -110,7 +110,8 @@ export type HazardReportStatus = 'pending_review' | 'verified' | 'resolved' | 'e
 export const HAZARD_VOTES = ['still_there', 'not_there'] as const;
 export type HazardVote = (typeof HAZARD_VOTES)[number];
 
-export type HazardConfidenceLevel = 'low' | 'medium' | 'high';
+/** Roughly "how many hikers back this right now": very_low <3, low 3-<5, medium 5-<10, high 10+. */
+export type HazardConfidenceLevel = 'very_low' | 'low' | 'medium' | 'high';
 
 /** A hiker's answer to "still there?" for a hazard they passed, queued offline like a report. */
 export interface HazardVoteUpload {

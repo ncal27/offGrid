@@ -13,7 +13,7 @@ open-source tools only; robust enough to demo, not to sell.
 ## Where we are
 
 Tested core logic for the whole loop: plan, download, navigate offline,
-photo-confirm, contribute, report and verify hazards (3-hiker consensus),
+photo-confirm, contribute, report and verify hazards (confidence tiers),
 and sync. A hardened backend (input and image sanitization, rate limits,
 reviewer auth). 126 automated tests, Ironhide protocol, change tracking.
 
@@ -28,7 +28,7 @@ and face blurring.
 | App on iPhone + Android | **Expo (React Native)**, run through the free **Expo Go** app | No app store, no $99 Apple account. Scan a QR code and it runs. Our core logic is already TypeScript |
 | Maps | `react-native-maps` (included in Expo Go) with OpenStreetMap tiles, cached for offline | Works in Expo Go. Native offline-map libraries would need custom builds |
 | Trail data | **OpenStreetMap** via the Overpass API, checked against the town's trail maps | Free; covers Wellesley's trails. Must show "© OpenStreetMap contributors" |
-| Sign-in | **Supabase anonymous sign-in**: one tap, no passwords | Easiest option, and it gives each phone a server-issued ID, which makes the 3-hiker rule much harder to fake than self-chosen IDs |
+| Sign-in | **Supabase anonymous sign-in**: one tap, no passwords | Easiest option, and it gives each phone a server-issued ID, which makes confidence tiers much harder to inflate than self-chosen IDs |
 | Database + photo storage | **Supabase** free tier (Postgres + Storage) | Free hosting would otherwise lose all hazards and photos every time the server sleeps |
 | API hosting | **Render** free web service (our existing Express backend) | Free. It sleeps after ~15 min idle, so open it a minute before the demo |
 | Photo matching | A ready-made, pretrained model (e.g. MobileNet image embeddings via TensorFlow.js). **No custom training** | Decided. Week 1 spike: confirm it runs inside Expo Go; fallback below |
@@ -44,18 +44,19 @@ demo still works; it's just less impressive offline.
 | When | Release | Goal |
 | --- | --- | --- |
 | **Nov 19 – 25** | **1.1.0** Foundation | Push to GitHub. Supabase project (database, storage, anonymous sign-in). Store hazards and photos in the database instead of memory. Import 3–5 Wellesley trails from OpenStreetMap. Expo app skeleton: trail list → map → live GPS on the route. Photo-model spike in Expo Go. |
-| **Nov 26 – Dec 1** (Thanksgiving week, lighter) | **1.2.0** Demo-ready | Download a trail for offline use. Camera + photo match. Report a hazard; "Still there?" prompt; hazard markers with confidence labels. Face blurring. Disclaimer screen. Deploy the API to Render. |
+| **Nov 26 – Dec 1** (Thanksgiving week, lighter) | **1.2.0** Demo-ready | Download a trail for offline use. Camera + photo match. Report a hazard; "Still there?" prompt; hazard markers with confidence labels. **Demo-only "simulate another hiker" button** (off unless demo mode is switched on, clearly labelled, simulated votes tagged so they can be wiped). Face blurring. Disclaimer screen. Deploy the API to Render. |
 | **Week of Dec 2** | 1.2.x | **Working demo.** Field-test on the pilot trails, collect reference landmark photos, tune the hazard numbers, fix bugs (Ironhide: every fix gets a test). |
 | **Dec 8** | **1.3.0** Final | Feature freeze, final release, rehearse the demo. |
 | **Dec 9** | — | Due / live demo. |
 
 **Demo-day checklist:** wake the Render server; pre-download the trail on
 every demo phone; show navigation in airplane mode; use **3 phones** to show
-a hazard appearing only after the third hiker confirms it.
+a hazard's confidence climbing as more "hikers" confirm it (real phones plus
+the simulate-a-hiker button).
 
 ## Pilot area: Wellesley, MA
 
-Candidate trails (confirm which 2–3 to field-test, see Q-B):
+Candidate trails. **Not locked in**: the team will look them up and pick 2–3 for field testing.
 
 - **Brook Path / Fuller Brook Park.** Easy, flat, ADA-accessible, ~2.5–3 mi. Good for a safe first test and demo.
 - **Centennial Reservation.** Woodland trails and the Maugus Hill view. A good "real hike" test.
@@ -78,7 +79,11 @@ Sources: [Town of Wellesley: Favorite Trail Walks](https://www.wellesleyma.gov/1
 | 2026-11-19 | **Easiest free sign-in** (Supabase anonymous) | Class project, not a product |
 | 2026-11-19 | **Free and open-source only** for hosting and tools | No budget |
 | 2026-11-19 | **Pilot: Wellesley, MA trails** | Near Babson; the team can field-test them |
-| 2026-11-19 | **Hazards need 3 different hikers before anyone sees them, every severity.** Impassable is no longer shown after one report. Implemented (`MIN_DISTINCT_CONFIRMATIONS = 3`; raise to 5 if needed) | One person must never be able to put a hazard on everyone's map |
+| 2026-11-19 | ~~Hazards need 3 different hikers before anyone sees them~~ (replaced the same day, below) | — |
+| 2026-11-19 | **Hazards are shown from the first report, with a confidence tier:** very low (1–2 hikers), low (3–<5), medium (5–<10), high (10+). On-the-spot GPS reports count more than no-GPS ones; "not there" and time lower it. Same type within ~200 ft = same hazard. Implemented | Hikers see possible hazards early, and the label tells them how much to trust it |
+| 2026-11-19 | **Phones:** 3 iPhones + 1 Android on the team. **Add a demo-only "simulate another hiker" button** | Test and demo multi-hiker features when not everyone is around |
+| 2026-11-19 | **Field-test trails: not locked in yet** | Team will look up the candidates first |
+| 2026-11-19 | **No AI-usage disclosure needed** in the app (it's an AI class) | — |
 | 2026-11-19 | **Blur all faces, especially children's.** If faces are a large part of the photo, reject it and ask the hiker to retake it without people. Landmark photos never need people in them | Privacy |
 | 2026-11-19 | **Ready-made photo model; no custom training** | Time and complexity |
 | 2026-11-19 | **A short disclaimer is enough** for liability (class project) | See wording below |
@@ -89,12 +94,9 @@ hazard information is community-reported and may be wrong or out of date.
 Always use your own judgment, carry a paper map, and follow posted signs and
 park rules."
 
-## Open questions (smaller ones; answer whenever)
+## Open questions
 
 | # | Question | Recommendation |
 | --- | --- | --- |
-| Q-A | **Phones for the demo.** Who has an iPhone and who has Android? We need at least 3 phones to show the 3-hiker rule live. | If there aren't 3, add a demo-only "simulate another hiker" button, clearly labelled. |
-| Q-B | **Which 2–3 trails to field-test** in the week of Dec 2? | Brook Path (easy), Rocky Ledges (landmarks), Waban Arches (most recognizable). |
+| Q-B | **Which 2–3 trails to field-test** in the week of Dec 2? | Team to decide after looking them up. My suggestion: Brook Path (easy), Rocky Ledges (landmarks), Waban Arches (most recognizable). |
 | Q-C | **GitHub repo name and visibility.** | Private repo named `offgrid`; add classmates as collaborators. |
-| Q-D | **Does the class require disclosure of AI-assisted work?** | Check the syllabus. `CHANGELOG.md` already records which tool made each change, which makes disclosure easy. |
-| Q-E | **Keep the 3-hiker rule at 3, or raise to 5 after field testing?** | Keep 3 for the demo. Small groups can't easily get 5 confirmations on a quiet trail. |
