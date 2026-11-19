@@ -5,7 +5,7 @@ team-level plan; `docs/roadmap.md` is the detailed engineering backlog under
 it. When a decision is made, log it in "Decisions made" with the date and
 reason.
 
-**Current version:** 1.0.0 (2026-11-19), plus unreleased changes. See `CHANGELOG.md`.
+**Current version:** 1.0.0 (2026-11-19). See `CHANGELOG.md`.
 **Goal:** a class project with a **live demo**: working by the **week of Dec 2**,
 field-tested on Wellesley trails, and final on **Dec 9**. Free and
 open-source tools only; robust enough to demo, not to sell.
