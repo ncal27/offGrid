@@ -34,9 +34,10 @@ model) and instead built out the data lifecycle around the core loop:
 - A **trail version/update-check flow** — `trailService.getTrailVersion()` +
   `GET /trails/:id/version`, with mobile's `UpdateChecker` comparing it
   against what's already downloaded.
-- A **hazard/wash-out reporting MVP** — `hazardService.ts`, structurally
-  mirroring the photo pipeline (report → corroborate/verify → ship in future
-  packages), plus an urgency shortcut for `'impassable'` severity.
+- A **hazard/wash-out reporting MVP** — `hazardService.ts`, since replaced
+  by a Waze-style confidence model (reports merge into incidents; "still
+  there"/"not there" votes weighted by proximity, trust and time decay; ship
+  only while confident). See `docs/HAZARD_VERIFICATION.md`.
 
 See `docs/roadmap.md`'s "Done (V2)" section for exactly what each of these
 does and doesn't yet handle, `docs/BUGS.md` for bugs found and fixed, and

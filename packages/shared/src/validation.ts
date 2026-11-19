@@ -72,6 +72,23 @@ export function isValidIsoTimestamp(value: unknown): value is string {
   return parsed > now - TEN_YEARS_MS && parsed < now + TEN_YEARS_MS;
 }
 
+/** Allowed clock skew between a phone and the server. */
+export const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+/** Oldest field observation (hazard report / vote) we accept, e.g. synced after a long trip. */
+export const MAX_OBSERVATION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Stricter than isValidIsoTimestamp, for anything whose age drives hazard
+ * confidence decay. A timestamp in the future would make a report look
+ * permanently fresh (it would never decay), so the future is limited to
+ * clock skew. Very old observations are refused rather than counted.
+ */
+export function isRecentObservationTimestamp(value: unknown, now = Date.now()): value is string {
+  if (!isValidIsoTimestamp(value)) return false;
+  const t = Date.parse(value);
+  return t <= now + MAX_CLOCK_SKEW_MS && t >= now - MAX_OBSERVATION_AGE_MS;
+}
+
 // Disallows C0 control characters and DEL, but allows tab/newline/carriage
 // return so ordinary multi-line descriptions still work. Also disallows
 // characters that are invisible or that change how surrounding text is

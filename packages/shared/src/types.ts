@@ -97,7 +97,41 @@ export type HazardType = (typeof HAZARD_TYPES)[number];
 export const HAZARD_SEVERITIES = ['minor', 'moderate', 'severe', 'impassable'] as const;
 export type HazardSeverity = (typeof HAZARD_SEVERITIES)[number];
 
-export type HazardReportStatus = 'pending_review' | 'verified' | 'resolved' | 'rejected';
+/**
+ * - pending_review: known to the server, not shared yet (not enough confidence)
+ * - verified: confident enough to ship in trip packages
+ * - resolved: hikers (or a reviewer) said it's gone
+ * - expired: nobody has confirmed it recently enough; confidence decayed away
+ * - rejected: a reviewer marked it false; never shared again
+ */
+export type HazardReportStatus = 'pending_review' | 'verified' | 'resolved' | 'expired' | 'rejected';
+
+/** Waze-style answers to "Is this hazard still there?" */
+export const HAZARD_VOTES = ['still_there', 'not_there'] as const;
+export type HazardVote = (typeof HAZARD_VOTES)[number];
+
+export type HazardConfidenceLevel = 'low' | 'medium' | 'high';
+
+/** A hiker's answer to "still there?" for a hazard they passed, queued offline like a report. */
+export interface HazardVoteUpload {
+  id: string;
+  incidentId: string;
+  trailId: string;
+  vote: HazardVote;
+  /** When the hiker actually saw it (not when it synced), used for decay. */
+  observedAt: string;
+  location?: LatLng;
+  gpsWeakOrMissing: boolean;
+  voterId: string;
+}
+
+export interface HazardVoteAck {
+  id: string;
+  incidentId: string;
+  status: HazardReportStatus;
+  confidence: number;
+  message: string;
+}
 
 /** A hiker-submitted trail-condition report, queued locally until the device reconnects (same shape as ContributedPhotoUpload). */
 export interface HazardReportUpload {
@@ -117,9 +151,16 @@ export interface HazardReportAck {
   id: string;
   status: HazardReportStatus;
   message: string;
+  /** The hazard incident this report was merged into (a new one, or an existing one nearby). */
+  incidentId?: string;
+  confidence?: number;
 }
 
-/** A hazard report that's been verified (by corroboration or review) and is safe to ship in a TripPackage. */
+/**
+ * A hazard incident (one or more merged reports about the same thing) that is
+ * confident enough to ship in a TripPackage. `id` is the incident id that
+ * "still there / not there" votes refer to.
+ */
 export interface HazardReport {
   id: string;
   trailId: string;
@@ -130,6 +171,17 @@ export interface HazardReport {
   reportedAt: string;
   status: HazardReportStatus;
   location?: LatLng;
+  /** Decayed, weighted confidence score (see backend hazardService for the formula). */
+  confidence: number;
+  confidenceLevel: HazardConfidenceLevel;
+  /** Distinct hikers who reported it or said it's still there. */
+  confirmations: number;
+  /** Distinct hikers who said it's not there. */
+  denials: number;
+  lastConfirmedAt: string;
+  /** When it drops below the sharing threshold if nobody confirms it again. Devices hide it after this, even offline. */
+  expiresAt: string;
+  verifiedBy: 'community' | 'reviewer' | 'urgent_report';
 }
 
 /** The complete, self-contained bundle a device downloads before going offline. */
@@ -151,13 +203,21 @@ export interface GpsFix {
   timestamp: string;
 }
 
-export type NavigationEventType = 'on_route' | 'off_route' | 'approaching_waypoint' | 'reached_waypoint';
+export type NavigationEventType =
+  | 'on_route'
+  | 'off_route'
+  | 'approaching_waypoint'
+  | 'reached_waypoint'
+  /** Near a downloaded hazard: the UI's cue to ask "Is this still there?" */
+  | 'approaching_hazard';
 
 export interface NavigationEvent {
   type: NavigationEventType;
   fix: GpsFix;
   nearestWaypointId?: string;
   distanceFromRouteMeters: number;
+  /** Set on 'approaching_hazard'. */
+  hazardId?: string;
 }
 
 export interface PhotoMatchCandidate {

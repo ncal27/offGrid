@@ -71,6 +71,10 @@ moderation, duplicate and near-duplicate detection.
   global byte budget for pending images.
 - Submission IDs: retrying the same id returns the original answer;
   someone else's id gets a `409` (BUG-007).
+- Hazards must be confirmed before they're shared: GPS-proximity-weighted
+  votes, time decay, one voice per hiker, and votes from >500m refused. See
+  `docs/HAZARD_VERIFICATION.md`. Hazard timestamps can't be in the future
+  (they would never decay) or more than 30 days old.
 - Review endpoints need `Authorization: Bearer $OFFGRID_REVIEWER_TOKEN`
   (≥ 32 chars, constant-time compare). They're off if the token is unset (BUG-009).
 - Errors return a short JSON code and never a stack trace. No `X-Powered-By`;
@@ -90,9 +94,10 @@ moderation, duplicate and near-duplicate detection.
 1. **No user accounts.** Contributor and reporter IDs are self-asserted, and
    reviewers share one token. Real auth (e.g. OAuth plus a reviewer role) is
    the biggest missing piece.
-2. **One `impassable` report is verified immediately** by design (see
-   `hazardService.ts`). Combined with (1), that's abusable. The circuit
-   breaker limits the damage but doesn't prevent it.
+2. **One `impassable` report is shared immediately** by design, labelled
+   unconfirmed, and one on-the-spot "not there" takes it down. Combined with
+   (1) it's still abusable; the per-trail cap and reviewer rejection limit
+   the damage.
 3. **Everything is in memory.** A restart loses pending items, and
    multiple server instances wouldn't share rate-limit or idempotency state.
 4. **HTTPS** must be terminated by whatever hosts this. The app itself

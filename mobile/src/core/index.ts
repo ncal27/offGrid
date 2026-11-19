@@ -8,3 +8,5 @@ export * from './OfflineUploadQueue';
 export * from './SyncQueue';
 export * from './HazardReportQueue';
 export * from './UpdateChecker';
+export * from './HazardVoteQueue';
+export * from './hazards';

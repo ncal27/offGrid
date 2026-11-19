@@ -1,179 +1,570 @@
-import { HazardReport, HazardReportAck, HazardReportUpload } from '@offgrid/shared';
+import {
+  HazardConfidenceLevel,
+  HazardReport,
+  HazardReportAck,
+  HazardReportStatus,
+  HazardReportUpload,
+  HazardSeverity,
+  HazardType,
+  HazardVote,
+  HazardVoteAck,
+  HazardVoteUpload,
+  LatLng,
+} from '@offgrid/shared';
+import { getTrailById } from './trailService';
 import { resolveWaypointId } from './waypointResolution';
+import { haversineDistanceMeters } from '../geo';
 
 /**
- * V2 MVP for roadmap item 7 (hazard/wash-out layer). Deliberately reuses the
- * same "unverified until corroborated or reviewed" shape as
- * contributionService's landmark photo pipeline, and inherits the same
- * open trust/abuse limitations documented there (docs/roadmap.md item 8) —
- * this is not a finished trust model.
+ * Hazard verification, modelled on how Waze handles road reports and adapted
+ * for hikers who are usually offline.
  *
- * One addition specific to hazards: a report marked 'impassable' severity is
- * verified immediately from a single report, without waiting for
- * corroboration. The reasoning is asymmetric risk — warning hikers about a
- * washed-out bridge that turns out to be fine costs little, while waiting
- * for a second report before warning about one that's real could matter a
- * lot more. This also makes the single-report path meaningfully easier to
- * abuse (one bad report instantly "verifies" a false hazard), which is
- * flagged as unresolved in docs/roadmap.md rather than solved here.
+ * Waze's model (from its help pages): reports appear on the map, passing
+ * drivers are asked "Still there?", and their answers lengthen ("Still
+ * there") or shorten ("Not there") how long a report stays up, depending on
+ * how many people react and on the report type. Waze doesn't publish exact
+ * numbers, so every number below is ours, picked as a reasonable default
+ * (docs/HAZARD_VERIFICATION.md walks through them). Tune them with real data.
+ *
+ * HOW IT WORKS
+ * Reports about the same thing (same trail, same hazard type, within
+ * CLUSTER_RADIUS_METERS) are merged into one INCIDENT. Every hiker gets
+ * exactly one voice per incident: their latest report / "still there" /
+ * "not there". An incident's confidence is
+ *
+ *     confidence = Σ weight(still there) − Σ weight(not there)
+ *     weight     = proximity × reporter trust × decay
+ *
+ *  - proximity: 1.0 if the hiker's GPS put them within VOTE_NEAR_METERS of the
+ *    hazard; 0.5 with no/weak GPS or from a bit further away (we can't
+ *    confirm they were there); refused beyond VOTE_MAX_METERS.
+ *  - trust: per-hiker reputation in [TRUST_MIN, TRUST_MAX], starting at 1.0.
+ *    Goes up when other hikers independently confirm your reports, down when
+ *    a reviewer rejects a hazard you vouched for.
+ *  - decay: halves every HALF_LIFE_HOURS[hazardType], measured from when the
+ *    hiker SAW it (observedAt), not when their phone synced. Flooding goes
+ *    stale in a day; a collapsed bridge doesn't.
+ *
+ * The incident is SHARED (shipped in trip packages as 'verified') while
+ * confidence ≥ SHARE_THRESHOLD[severity]. Worse hazards need less proof
+ * (asymmetric risk: a missed "bridge out" warning costs far more than a stale
+ * one), but they start at 'low' confidence so the app can label them
+ * "unconfirmed", and a single "not there" can take them down again.
+ * Confidence ≤ 0 with at least one "not there" means RESOLVED. If nobody has
+ * confirmed it for EXPIRE_AFTER_HALF_LIVES half-lives it's EXPIRED.
+ *
+ * Reviewers can verify (adds a strong vote that still decays and can still
+ * be outvoted on the ground), resolve, or reject (permanent, and costs the
+ * people who vouched for it some trust).
+ *
+ * LIMITS (be honest about these): reporter IDs are self-asserted until real
+ * accounts exist, so someone can invent fresh IDs at the default trust. The
+ * per-IP rate limit in app.ts is the actual bound on that today, and
+ * reputation only becomes meaningful with real auth (roadmap item 10).
  */
-const PROMOTION_MIN_DISTINCT_REPORTERS = 2;
-const TIME_WINDOW_MS = 1000 * 60 * 60 * 24 * 14; // ~14 days — hazards go stale much faster than landmarks do
 
-// Same blunt volume-cap reasoning as contributionService.ts.
-const MAX_PENDING_PER_TRAIL = 500;
-const MAX_PENDING_PER_REPORTER_PER_TRAIL = 20;
+// ---- Tunable policy -------------------------------------------------------
+
+export const CLUSTER_RADIUS_METERS = 75;
+export const VOTE_NEAR_METERS = 150;
+export const VOTE_MAX_METERS = 500;
+const WEIGHT_NEAR = 1.0;
+const WEIGHT_UNVERIFIED_POSITION = 0.5;
 
 /**
- * The 'impassable' urgent path (see below) verifies a report immediately,
- * without ever sitting in `pendingReports` — so the pending-queue caps above
- * do nothing to stop a single reporter from flooding `verifiedHazardsByTrailId`
- * (which ships in every future package) by submitting many distinct urgent
- * reports. This is the backstop for that: once a trail has an unusually high
- * number of verified hazards, auto-verification (urgent or corroborated)
- * stops and everything falls back to pending_review, forcing human review
- * before the list grows further.
+ * Thresholds sit BELOW what fresh votes add up to, so a shared hazard stays
+ * up for a while before it needs re-confirming. Two on-the-spot hikers give
+ * 2.0, which stays above 1.5 for log2(2/1.5) ≈ 0.4 half-lives: ~3 days for a
+ * downed tree, ~10 hours for flooding. Each "still there" pushes that out.
  */
-const MAX_VERIFIED_HAZARDS_PER_TRAIL = 200;
+export const SHARE_THRESHOLD: Record<HazardSeverity, number> = {
+  minor: 1.5, // two hikers on the spot, or one on the spot + one without GPS
+  moderate: 1.5,
+  severe: 1.25, // same, a little easier
+  impassable: 0.4, // any single report, shipped as an unconfirmed/low-confidence warning
+};
 
-const pendingReports = new Map<string, HazardReportUpload>();
-const verifiedHazardsByTrailId = new Map<string, HazardReport[]>();
+export const HALF_LIFE_HOURS: Record<HazardType, number> = {
+  flooding: 24,
+  other: 72,
+  downed_tree: 7 * 24,
+  washout: 14 * 24,
+  bridge_out: 30 * 24,
+};
+const EXPIRE_AFTER_HALF_LIVES = 3;
 
-/**
- * Same idempotency/ownership record as contributionService's `submissions`.
- * Without it, a retried 'impassable' report (the mobile queue retries
- * whenever a response is lost) was verified a second time, shipping a
- * duplicate hazard in every package (BUG-007).
- */
+export const TRUST_DEFAULT = 1.0;
+export const TRUST_MIN = 0.25;
+export const TRUST_MAX = 1.5;
+const TRUST_REWARD_CONFIRMED = 0.1;
+const TRUST_PENALTY_REJECTED = 0.3;
+
+const REVIEWER_VOTER_ID = '__reviewer__';
+const REVIEWER_WEIGHT = 4.0;
+
+// Volume caps (same reasoning as contributionService).
+const MAX_OPEN_INCIDENTS_PER_TRAIL = 500;
+const MAX_OPEN_INCIDENTS_CREATED_PER_REPORTER_PER_TRAIL = 20;
+/** Circuit breaker: never ship more than this many hazards for one trail. Highest confidence wins. */
+const MAX_SHARED_HAZARDS_PER_TRAIL = 200;
 const MAX_REMEMBERED_SUBMISSIONS = 50_000;
-const submissions = new Map<string, { reporterId: string; ack: HazardReportAck }>();
 
-export type SubmissionIdCheck =
-  | { kind: 'new' }
-  | { kind: 'duplicate'; ack: HazardReportAck }
-  | { kind: 'conflict' };
+const HOUR_MS = 60 * 60 * 1000;
 
-export function checkSubmissionId(id: string, reporterId: string): SubmissionIdCheck {
-  const previous = submissions.get(id);
-  if (!previous) return { kind: 'new' };
-  if (previous.reporterId !== reporterId) return { kind: 'conflict' };
-  return { kind: 'duplicate', ack: previous.ack };
+// ---- State ----------------------------------------------------------------
+
+type VoteKind = 'report' | HazardVote;
+
+interface StoredVote {
+  submissionId: string;
+  voterId: string;
+  kind: VoteKind;
+  observedAt: number;
+  proximityWeight: number;
+  /**
+   * The voter's trust when they voted. Snapshotted so a reputation change
+   * earned BECAUSE of this incident (e.g. the reward for being confirmed)
+   * doesn't retroactively inflate this incident's own score.
+   */
+  trust: number;
+  /** Only on 'report' votes: what this hiker said the severity was. */
+  severity?: HazardSeverity;
 }
 
-function rememberSubmission(upload: HazardReportUpload, ack: HazardReportAck): void {
+interface Incident {
+  id: string;
+  trailId: string;
+  hazardType: HazardType;
+  waypointId?: string;
+  /** Where the hazard is; votes are proximity-checked against this. Absent if no report had a position. */
+  anchor?: LatLng;
+  description?: string;
+  createdBy: string;
+  createdAt: number;
+  /** One entry per voter: their latest vote wins. */
+  votes: Map<string, StoredVote>;
+  reviewerAction?: 'resolved' | 'rejected';
+  /** Whether the creator has already been rewarded for this incident being confirmed by others. */
+  creatorRewarded: boolean;
+}
+
+const incidents = new Map<string, Incident>();
+const trustByHiker = new Map<string, number>();
+
+/**
+ * Idempotency/ownership for both reports and votes, keyed by the client's
+ * submission id (BUG-007). Same id + same owner = safe retry, different owner
+ * = conflict.
+ */
+type AnyAck = HazardReportAck | HazardVoteAck;
+const submissions = new Map<string, { ownerId: string; ack: AnyAck }>();
+
+export type SubmissionIdCheck<A extends AnyAck = AnyAck> =
+  | { kind: 'new' }
+  | { kind: 'duplicate'; ack: A }
+  | { kind: 'conflict' };
+
+export function checkSubmissionId<A extends AnyAck = HazardReportAck>(id: string, ownerId: string): SubmissionIdCheck<A> {
+  const previous = submissions.get(id);
+  if (!previous) return { kind: 'new' };
+  if (previous.ownerId !== ownerId) return { kind: 'conflict' };
+  return { kind: 'duplicate', ack: previous.ack as A };
+}
+
+function rememberSubmission(id: string, ownerId: string, ack: AnyAck): void {
   if (submissions.size >= MAX_REMEMBERED_SUBMISSIONS) {
     const oldest = submissions.keys().next().value;
     if (oldest !== undefined) submissions.delete(oldest);
   }
-  submissions.set(upload.id, { reporterId: upload.reporterId, ack });
+  submissions.set(id, { ownerId, ack });
 }
 
-/** Checked by the route before accepting a new report, so a flood of garbage can't grow this map without bound. */
-export function canAcceptMoreHazardReports(trailId: string, reporterId: string): boolean {
-  const trailPending = listPendingForTrail(trailId);
-  if (trailPending.length >= MAX_PENDING_PER_TRAIL) return false;
-  const fromReporter = trailPending.filter((r) => r.reporterId === reporterId);
-  return fromReporter.length < MAX_PENDING_PER_REPORTER_PER_TRAIL;
+// ---- Trust ----------------------------------------------------------------
+
+export function getTrust(hikerId: string): number {
+  return trustByHiker.get(hikerId) ?? TRUST_DEFAULT;
+}
+
+function adjustTrust(hikerId: string, delta: number): void {
+  if (hikerId === REVIEWER_VOTER_ID) return;
+  const next = Math.min(TRUST_MAX, Math.max(TRUST_MIN, getTrust(hikerId) + delta));
+  trustByHiker.set(hikerId, next);
+}
+
+// ---- Scoring --------------------------------------------------------------
+
+function voteWeight(incident: Incident, vote: StoredVote, now: number): number {
+  const trust = vote.trust;
+  const ageHours = Math.max(0, now - vote.observedAt) / HOUR_MS;
+  const decay = Math.pow(0.5, ageHours / HALF_LIFE_HOURS[incident.hazardType]);
+  return vote.proximityWeight * trust * decay;
 }
 
 /**
- * Reports only corroborate each other if both resolve to the SAME KNOWN
- * waypoint. Previously `waypointId` could be `undefined` on both sides, and
- * `undefined === undefined` meant any two reports of the same type with no
- * location and no hint "corroborated" each other, wherever they actually
- * were on the trail (BUG-014).
+ * Severity of an incident = the severity with the most (undecayed) report
+ * weight behind it, ties going to the LESS severe option. One hiker
+ * claiming "impassable" can't escalate a spot several others called
+ * "moderate", and so can't drag the sharing threshold down on their own.
  */
-function findCorroborators(
-  trailId: string,
-  waypointId: string | undefined,
-  hazardType: string,
-  aroundTime: Date,
-): HazardReportUpload[] {
-  if (waypointId === undefined) return [];
-  return [...pendingReports.values()].filter((r) => {
-    if (r.trailId !== trailId) return false;
-    if (r.hazardType !== hazardType) return false;
-    if (resolveWaypointId(r) !== waypointId) return false;
-    const dt = Math.abs(new Date(r.reportedAt).getTime() - aroundTime.getTime());
-    return dt <= TIME_WINDOW_MS;
-  });
+function incidentSeverity(incident: Incident): HazardSeverity {
+  const order: HazardSeverity[] = ['minor', 'moderate', 'severe', 'impassable'];
+  const tally = new Map<HazardSeverity, number>();
+  for (const v of incident.votes.values()) {
+    if (v.kind !== 'report' || !v.severity) continue;
+    tally.set(v.severity, (tally.get(v.severity) ?? 0) + v.proximityWeight * v.trust);
+  }
+  let best: HazardSeverity = 'moderate';
+  let bestWeight = -1;
+  for (const sev of order) {
+    const w = tally.get(sev) ?? 0;
+    if (w > bestWeight) {
+      best = sev;
+      bestWeight = w;
+    }
+  }
+  return best;
 }
 
-function verifyReport(upload: HazardReportUpload, waypointId: string | undefined): HazardReport {
-  const hazard: HazardReport = {
-    id: `verified-${upload.id}`,
-    trailId: upload.trailId,
-    waypointId,
-    hazardType: upload.hazardType,
-    severity: upload.severity,
-    description: upload.description,
-    reportedAt: upload.reportedAt,
-    status: 'verified',
-    location: upload.location,
-  };
-  const existing = verifiedHazardsByTrailId.get(upload.trailId) ?? [];
-  verifiedHazardsByTrailId.set(upload.trailId, [...existing, hazard]);
-  return hazard;
+export interface IncidentAssessment {
+  status: HazardReportStatus;
+  confidence: number;
+  confidenceLevel: HazardConfidenceLevel;
+  severity: HazardSeverity;
+  threshold: number;
+  confirmations: number;
+  denials: number;
+  lastConfirmedAt: number;
+  expiresAt: number;
+  verifiedBy: HazardReport['verifiedBy'];
+}
+
+function assess(incident: Incident, now: number): IncidentAssessment {
+  let support = 0;
+  let against = 0;
+  let confirmations = 0;
+  let denials = 0;
+  let lastConfirmedAt = incident.createdAt;
+  let reviewerVouched = false;
+  for (const v of incident.votes.values()) {
+    const w = voteWeight(incident, v, now);
+    if (v.kind === 'not_there') {
+      against += w;
+      denials++;
+    } else {
+      support += w;
+      if (v.voterId === REVIEWER_VOTER_ID) reviewerVouched = true;
+      else confirmations++;
+      lastConfirmedAt = Math.max(lastConfirmedAt, v.observedAt);
+    }
+  }
+
+  const confidence = Math.round((support - against) * 1000) / 1000;
+  const severity = incidentSeverity(incident);
+  const threshold = SHARE_THRESHOLD[severity];
+  const halfLifeMs = HALF_LIFE_HOURS[incident.hazardType] * HOUR_MS;
+
+  // With one shared half-life per incident, the whole score decays as
+  // confidence(t) = confidence(now) · 0.5^((t − now) / halfLife), so the moment
+  // it crosses the threshold has a closed form.
+  const expiresAt =
+    confidence >= threshold ? now + halfLifeMs * Math.log2(confidence / threshold) : now;
+
+  let status: HazardReportStatus;
+  if (incident.reviewerAction) status = incident.reviewerAction;
+  else if (confidence >= threshold) status = 'verified';
+  else if (denials > 0 && confidence <= 0) status = 'resolved';
+  else if (now - lastConfirmedAt > EXPIRE_AFTER_HALF_LIVES * halfLifeMs) status = 'expired';
+  else status = 'pending_review';
+
+  const confidenceLevel: HazardConfidenceLevel =
+    confirmations >= 3 && confidence >= 2 * threshold && confidence >= 3
+      ? 'high'
+      : confirmations >= 2 && confidence >= 2
+        ? 'medium'
+        : 'low';
+
+  const verifiedBy: HazardReport['verifiedBy'] = reviewerVouched
+    ? 'reviewer'
+    : confirmations >= 2 && confidence >= SHARE_THRESHOLD.moderate
+      ? 'community'
+      : 'urgent_report';
+
+  return { status, confidence, confidenceLevel, severity, threshold, confirmations, denials, lastConfirmedAt, expiresAt, verifiedBy };
+}
+
+/** Rewards an incident's creator the first time other hikers independently confirm it. */
+function settleRewards(incident: Incident, a: IncidentAssessment): void {
+  if (incident.creatorRewarded || a.status !== 'verified') return;
+  const othersConfirming = [...incident.votes.values()].some(
+    (v) => v.kind !== 'not_there' && v.voterId !== incident.createdBy && v.voterId !== REVIEWER_VOTER_ID,
+  );
+  if (othersConfirming) {
+    adjustTrust(incident.createdBy, TRUST_REWARD_CONFIRMED);
+    incident.creatorRewarded = true;
+  }
+}
+
+// ---- Geometry helpers -----------------------------------------------------
+
+function waypointLocation(trailId: string, waypointId: string | undefined): LatLng | undefined {
+  if (!waypointId) return undefined;
+  return getTrailById(trailId)?.waypoints.find((wp) => wp.id === waypointId)?.location;
+}
+
+/** Proximity weight for a vote, or null if the hiker was demonstrably too far away to know. */
+function proximityWeight(
+  anchor: LatLng | undefined,
+  location: LatLng | undefined,
+  gpsWeakOrMissing: boolean,
+): number | null {
+  if (!anchor || !location || gpsWeakOrMissing) return WEIGHT_UNVERIFIED_POSITION;
+  const d = haversineDistanceMeters(anchor, location);
+  if (d <= VOTE_NEAR_METERS) return WEIGHT_NEAR;
+  if (d <= VOTE_MAX_METERS) return WEIGHT_UNVERIFIED_POSITION;
+  return null;
+}
+
+function isOpen(incident: Incident, now: number): boolean {
+  if (incident.reviewerAction) return false;
+  const s = assess(incident, now).status;
+  return s === 'verified' || s === 'pending_review';
+}
+
+/**
+ * Finds an open incident this report is about: same trail and hazard type,
+ * within CLUSTER_RADIUS_METERS. A report with no position at all never
+ * merges (merging position-less reports is exactly BUG-014).
+ */
+function findMatchingIncident(
+  trailId: string,
+  hazardType: HazardType,
+  position: LatLng | undefined,
+  now: number,
+): Incident | undefined {
+  if (!position) return undefined;
+  let best: Incident | undefined;
+  let bestDist = Infinity;
+  for (const inc of incidents.values()) {
+    if (inc.trailId !== trailId || inc.hazardType !== hazardType || !inc.anchor) continue;
+    if (!isOpen(inc, now)) continue;
+    const d = haversineDistanceMeters(position, inc.anchor);
+    if (d <= CLUSTER_RADIUS_METERS && d < bestDist) {
+      best = inc;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+/** Keeps a hiker's latest-observed vote only, so replaying an old vote can't override a newer one. */
+function recordVote(incident: Incident, vote: StoredVote): void {
+  const existing = incident.votes.get(vote.voterId);
+  if (existing && existing.observedAt > vote.observedAt) return;
+  incident.votes.set(vote.voterId, vote);
+}
+
+// ---- Public API: reports --------------------------------------------------
+
+export function canAcceptMoreHazardReports(trailId: string, reporterId: string, now = Date.now()): boolean {
+  const open = [...incidents.values()].filter((i) => i.trailId === trailId && isOpen(i, now));
+  if (open.length >= MAX_OPEN_INCIDENTS_PER_TRAIL) return false;
+  const created = open.filter((i) => i.createdBy === reporterId);
+  return created.length < MAX_OPEN_INCIDENTS_CREATED_PER_REPORTER_PER_TRAIL;
+}
+
+function ackMessage(a: IncidentAssessment, merged: boolean): string {
+  if (a.status === 'verified') {
+    return a.verifiedBy === 'urgent_report' && a.confirmations < 2
+      ? 'Shared right away as an unconfirmed warning because of its severity. Other hikers will be asked to confirm it.'
+      : `Shared with other hikers (${a.confirmations} hiker${a.confirmations === 1 ? '' : 's'} confirmed it).`;
+  }
+  return merged
+    ? 'Thanks. Added as a confirmation of a hazard other hikers already reported here.'
+    : 'Received. It will be shared with other hikers once someone else confirms it.';
 }
 
 /**
  * Callers must have already run checkSubmissionId() (and handled duplicate or
  * conflict) and canAcceptMoreHazardReports(). The route does both.
  */
-export function submitHazardReport(upload: HazardReportUpload): HazardReportAck {
-  const ack = evaluate(upload);
-  rememberSubmission(upload, ack);
+export function submitHazardReport(upload: HazardReportUpload, now = Date.now()): HazardReportAck {
+  const waypointId = resolveWaypointId(upload);
+  const position = upload.location ?? waypointLocation(upload.trailId, waypointId);
+  const existing = findMatchingIncident(upload.trailId, upload.hazardType, position, now);
+
+  const incident: Incident = existing ?? {
+    id: `hz-${upload.id}`,
+    trailId: upload.trailId,
+    hazardType: upload.hazardType,
+    waypointId,
+    anchor: position,
+    description: upload.description,
+    createdBy: upload.reporterId,
+    createdAt: Math.min(now, Date.parse(upload.reportedAt)),
+    votes: new Map(),
+    creatorRewarded: false,
+  };
+  if (!existing) incidents.set(incident.id, incident);
+
+  // A report is also an implicit "still there" from its reporter. Merging
+  // means a second reporter confirms the first, like a Waze "thumbs up".
+  recordVote(incident, {
+    submissionId: upload.id,
+    voterId: upload.reporterId,
+    kind: 'report',
+    observedAt: Math.min(now, Date.parse(upload.reportedAt)),
+    proximityWeight: proximityWeight(incident.anchor, upload.location, upload.gpsWeakOrMissing) ?? WEIGHT_UNVERIFIED_POSITION,
+    trust: getTrust(upload.reporterId),
+    severity: upload.severity,
+  });
+
+  const a = assess(incident, now);
+  settleRewards(incident, a);
+  const shared = isShared(incident, now);
+  const ack: HazardReportAck = {
+    id: upload.id,
+    incidentId: incident.id,
+    status: a.status === 'verified' && !shared ? 'pending_review' : a.status,
+    confidence: a.confidence,
+    message:
+      a.status === 'verified' && !shared
+        ? 'Received. This trail already has an unusually high number of active hazards, so this one needs human review before it is shared.'
+        : ackMessage(a, !!existing),
+  };
+  rememberSubmission(upload.id, upload.reporterId, ack);
   return ack;
 }
 
-function evaluate(upload: HazardReportUpload): HazardReportAck {
-  pendingReports.set(upload.id, upload);
+// ---- Public API: "still there?" votes -------------------------------------
 
-  const waypointId = resolveWaypointId(upload);
-  const corroborators = findCorroborators(
-    upload.trailId,
-    waypointId,
-    upload.hazardType,
-    new Date(upload.reportedAt),
-  );
-  const distinctReporters = new Set(corroborators.map((c) => c.reporterId));
-  const isUrgent = upload.severity === 'impassable';
-  const wouldAutoVerify = isUrgent || distinctReporters.size >= PROMOTION_MIN_DISTINCT_REPORTERS;
-  const circuitBreakerTripped = getVerifiedHazardsForTrail(upload.trailId).length >= MAX_VERIFIED_HAZARDS_PER_TRAIL;
+export type VoteResult =
+  | { ok: true; ack: HazardVoteAck }
+  | { ok: false; reason: 'not_found' | 'closed' | 'too_far' };
 
-  if (wouldAutoVerify && !circuitBreakerTripped) {
-    verifyReport(upload, waypointId);
-    for (const c of corroborators) pendingReports.delete(c.id);
-    pendingReports.delete(upload.id);
-    return {
-      id: upload.id,
-      status: 'verified',
-      message: isUrgent
-        ? 'Marked impassable — verified immediately given the severity; flagged for human confirmation.'
-        : `Verified after ${distinctReporters.size} independent reports.`,
-    };
-  }
+export function submitHazardVote(upload: HazardVoteUpload, now = Date.now()): VoteResult {
+  const incident = incidents.get(upload.incidentId);
+  if (!incident || incident.trailId !== upload.trailId) return { ok: false, reason: 'not_found' };
+  if (incident.reviewerAction) return { ok: false, reason: 'closed' };
 
-  return {
+  const weight = proximityWeight(incident.anchor, upload.location, upload.gpsWeakOrMissing);
+  if (weight === null) return { ok: false, reason: 'too_far' };
+
+  recordVote(incident, {
+    submissionId: upload.id,
+    voterId: upload.voterId,
+    kind: upload.vote,
+    observedAt: Math.min(now, Date.parse(upload.observedAt)),
+    proximityWeight: weight,
+    trust: getTrust(upload.voterId),
+  });
+
+  const a = assess(incident, now);
+  settleRewards(incident, a);
+  const ack: HazardVoteAck = {
     id: upload.id,
-    status: 'pending_review',
-    message: wouldAutoVerify
-      ? 'Received. This trail already has an unusually high number of verified hazards, so this report requires human review before it can be verified.'
-      : 'Received. This hazard report is queued for review and is not yet part of the official trail package.',
+    incidentId: incident.id,
+    status: a.status,
+    confidence: a.confidence,
+    message: upload.vote === 'not_there' ? 'Thanks. Marked as possibly cleared.' : 'Thanks for confirming.',
+  };
+  rememberSubmission(upload.id, upload.voterId, ack);
+  return { ok: true, ack };
+}
+
+// ---- Public API: reviewers ------------------------------------------------
+
+export type ReviewerAction = 'verify' | 'resolve' | 'reject';
+
+export function reviewIncident(incidentId: string, action: ReviewerAction, now = Date.now()): IncidentAssessment | null {
+  const incident = incidents.get(incidentId);
+  if (!incident) return null;
+
+  if (action === 'verify') {
+    incident.reviewerAction = undefined;
+    // A strong vote, not a permanent pin: it still decays, and hikers on the
+    // ground can still outvote it if the hazard clears.
+    incident.votes.set(REVIEWER_VOTER_ID, {
+      submissionId: `review-${now}`,
+      voterId: REVIEWER_VOTER_ID,
+      kind: 'still_there',
+      observedAt: now,
+      proximityWeight: REVIEWER_WEIGHT,
+      trust: 1,
+    });
+  } else if (action === 'resolve') {
+    incident.reviewerAction = 'resolved';
+  } else {
+    if (incident.reviewerAction !== 'rejected') {
+      for (const v of incident.votes.values()) {
+        if (v.kind !== 'not_there') adjustTrust(v.voterId, -TRUST_PENALTY_REJECTED);
+      }
+    }
+    incident.reviewerAction = 'rejected';
+  }
+  return assess(incident, now);
+}
+
+// ---- Public API: reading --------------------------------------------------
+
+function toHazardReport(incident: Incident, a: IncidentAssessment): HazardReport {
+  return {
+    id: incident.id,
+    trailId: incident.trailId,
+    waypointId: incident.waypointId,
+    hazardType: incident.hazardType,
+    severity: a.severity,
+    description: incident.description,
+    reportedAt: new Date(incident.createdAt).toISOString(),
+    status: 'verified',
+    location: incident.anchor,
+    confidence: a.confidence,
+    confidenceLevel: a.confidenceLevel,
+    confirmations: a.confirmations,
+    denials: a.denials,
+    lastConfirmedAt: new Date(a.lastConfirmedAt).toISOString(),
+    expiresAt: new Date(a.expiresAt).toISOString(),
+    verifiedBy: a.verifiedBy,
   };
 }
 
-export function listPendingForTrail(trailId: string): HazardReportUpload[] {
-  return [...pendingReports.values()].filter((r) => r.trailId === trailId);
+/** Hazards to ship in trip packages: currently verified, most confident first, capped per trail. */
+export function getVerifiedHazardsForTrail(trailId: string, now = Date.now()): HazardReport[] {
+  const out: HazardReport[] = [];
+  for (const inc of incidents.values()) {
+    if (inc.trailId !== trailId) continue;
+    const a = assess(inc, now);
+    if (a.status === 'verified') out.push(toHazardReport(inc, a));
+  }
+  out.sort((x, y) => y.confidence - x.confidence);
+  return out.slice(0, MAX_SHARED_HAZARDS_PER_TRAIL);
 }
 
-export function getVerifiedHazardsForTrail(trailId: string): HazardReport[] {
-  return verifiedHazardsByTrailId.get(trailId) ?? [];
+function isShared(incident: Incident, now: number): boolean {
+  return getVerifiedHazardsForTrail(incident.trailId, now).some((h) => h.id === incident.id);
+}
+
+export interface IncidentSummary extends IncidentAssessment {
+  id: string;
+  trailId: string;
+  hazardType: HazardType;
+  waypointId?: string;
+}
+
+/** For reviewers and tests: every incident on a trail with its current assessment. */
+export function listIncidentsForTrail(trailId: string, now = Date.now()): IncidentSummary[] {
+  return [...incidents.values()]
+    .filter((i) => i.trailId === trailId)
+    .map((i) => ({ id: i.id, trailId: i.trailId, hazardType: i.hazardType, waypointId: i.waypointId, ...assess(i, now) }));
+}
+
+/** Not-yet-shared incidents (kept for existing callers/tests). */
+export function listPendingForTrail(trailId: string, now = Date.now()): IncidentSummary[] {
+  return listIncidentsForTrail(trailId, now).filter((i) => i.status === 'pending_review');
 }
 
 /** Test-only helper to reset in-memory state between test cases. */
 export function _resetForTests(): void {
-  pendingReports.clear();
-  verifiedHazardsByTrailId.clear();
+  incidents.clear();
+  trustByHiker.clear();
   submissions.clear();
 }

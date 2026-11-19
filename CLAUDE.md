@@ -78,19 +78,22 @@ only ever includes `LandmarkPhoto`s with `status: 'official'` or
 contributed photo or hazard report must never appear in a downloadable
 package until promoted/verified.
 
-`contributionService.ts` and `hazardService.ts` both now implement a
-corroboration-based promotion/verification rule (2+ distinct
-contributors/reporters near the same waypoint within a tolerance window —
-see each file's top comment for the exact numbers and the trust
-assumptions they rest on). Waypoint resolution is shared in
+`contributionService.ts` implements a corroboration-based promotion rule
+(2+ distinct contributors near the same waypoint). `hazardService.ts` uses a
+**Waze-style confidence model**: reports merge into incidents, hikers vote
+"still there"/"not there" (`POST /hazards/votes`), each vote is weighted by
+GPS proximity × reporter trust × time decay (half-life per hazard type), and
+an incident ships only while its confidence clears a per-severity threshold.
+**Read `docs/HAZARD_VERIFICATION.md` before changing any of it.** Every
+number there is a tunable guess, not settled design. Waypoint resolution is shared in
 `services/waypointResolution.ts`: a hint must be a waypoint on that trail
 and is ignored if the upload's own GPS location contradicts it. Both
 services remember submission IDs, so a retry of the same id is idempotent and
 another user's id gets a 409. `contributionService.ts` additionally exposes a human-review
 override (`manuallyPromote`/`manuallyReject`, routed at
 `POST /contributions/:id/promote` and `/:id/reject`, guarded by
-`middleware/requireReviewer.ts`) — `hazardService.ts`
-does not have an equivalent yet, which is a known gap (roadmap item 4).
+`middleware/requireReviewer.ts`). Hazards have reviewer endpoints too
+(`/hazards/:id/verify|resolve|reject`, `GET /hazards/incidents`).
 Read `docs/roadmap.md`'s "Done (V2)" section before changing either of
 these — several deliberately-simple choices (the `2` threshold, the
 distance/time tolerances, trusting `waypointHintId`) are flagged there as
@@ -111,7 +114,9 @@ implement it. The actual logic worth understanding:
 
 - `OfflineNavigator` — compares `GpsFix`es against a `Trail`'s route line
   (point-to-polyline distance in `geo.ts`) and waypoints, entirely offline,
-  emitting `on_route`/`off_route`/`approaching_waypoint`/`reached_waypoint`.
+  emitting `on_route`/`off_route`/`approaching_waypoint`/`reached_waypoint`,
+  plus `approaching_hazard` (once per downloaded, unexpired hazard within
+  150m), the UI's cue to ask "Still there?". Answers go into `HazardVoteQueue`.
 - `LandmarkMatcher` — cosine-similarity match of a captured photo's embedding
   (via `EmbeddingAdapter`, currently always a fake in tests) against a
   trail's downloaded reference photo embeddings. Deliberately a closed-set,

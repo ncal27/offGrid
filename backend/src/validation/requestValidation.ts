@@ -2,7 +2,10 @@ import {
   ContributedPhotoUpload,
   HAZARD_SEVERITIES,
   HAZARD_TYPES,
+  HAZARD_VOTES,
   HazardReportUpload,
+  HazardVoteUpload,
+  isRecentObservationTimestamp,
   isOptionalBoolean,
   isSafeId,
   isSafeOptionalId,
@@ -121,8 +124,10 @@ export function validateHazardReportUploadBody(body: unknown): ValidationResult<
   if (!isSafeOptionalText(b.description, MAX_DESCRIPTION_LENGTH)) {
     errors.push(`description, if provided, must be 1-${MAX_DESCRIPTION_LENGTH} characters with no control characters`);
   }
-  if (!isValidIsoTimestamp(b.reportedAt)) {
-    errors.push('reportedAt is required and must be a valid timestamp within the last/next 10 years');
+  // Stricter than capturedAt: hazard confidence decays from this time, so a
+  // future timestamp would keep a report "fresh" forever.
+  if (!isRecentObservationTimestamp(b.reportedAt)) {
+    errors.push('reportedAt is required, must not be in the future, and must be within the last 30 days');
   }
   if (!isValidOptionalLatLng(b.location)) {
     errors.push('location, if provided, must have lat in [-90, 90] and lng in [-180, 180]');
@@ -150,6 +155,43 @@ export function validateHazardReportUploadBody(body: unknown): ValidationResult<
       location: b.location as ValidatedHazardReportFields['location'],
       gpsWeakOrMissing: (b.gpsWeakOrMissing as boolean | undefined) ?? false,
       reporterId: b.reporterId as string,
+    },
+  };
+}
+
+export function validateHazardVoteBody(body: unknown): ValidationResult<HazardVoteUpload> {
+  if (typeof body !== 'object' || body === null) {
+    return { valid: false, errors: ['request body must be a JSON object'] };
+  }
+  const b = body as Record<string, unknown>;
+  const errors: string[] = [];
+
+  if (!isSafeId(b.id)) errors.push('id is required and must be a safe identifier (used to make retries safe)');
+  if (!isSafeId(b.incidentId)) errors.push('incidentId is required and must be a safe identifier');
+  if (!isSafeId(b.trailId)) errors.push('trailId is required and must be a safe identifier');
+  if (!isValidEnumValue(b.vote, HAZARD_VOTES)) errors.push(`vote must be one of: ${HAZARD_VOTES.join(', ')}`);
+  if (!isRecentObservationTimestamp(b.observedAt)) {
+    errors.push('observedAt is required, must not be in the future, and must be within the last 30 days');
+  }
+  if (!isValidOptionalLatLng(b.location)) {
+    errors.push('location, if provided, must have lat in [-90, 90] and lng in [-180, 180]');
+  }
+  if (!isOptionalBoolean(b.gpsWeakOrMissing)) errors.push('gpsWeakOrMissing must be a boolean if provided');
+  if (!isSafeId(b.voterId)) errors.push('voterId is required and must be a safe identifier');
+
+  if (errors.length > 0) return { valid: false, errors };
+  return {
+    valid: true,
+    errors: [],
+    value: {
+      id: b.id as string,
+      incidentId: b.incidentId as string,
+      trailId: b.trailId as string,
+      vote: b.vote as HazardVoteUpload['vote'],
+      observedAt: b.observedAt as string,
+      location: b.location as HazardVoteUpload['location'],
+      gpsWeakOrMissing: (b.gpsWeakOrMissing as boolean | undefined) ?? false,
+      voterId: b.voterId as string,
     },
   };
 }

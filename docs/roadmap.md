@@ -127,6 +127,22 @@
 - Partially addresses item 8: EXIF/GPS metadata is stripped from every
   contributed photo. Face blurring and moderation are still open.
 
+## Done (Waze-style hazard verification, 2026-11-19)
+
+- Hazard reports merge into incidents with a confidence score built from
+  "still there"/"not there" votes, weighted by GPS proximity, reporter trust
+  and time decay (per hazard type). Incidents ship only while confident
+  enough, and ship with `expiresAt` so phones drop stale warnings offline.
+  Severity-based thresholds replace the old "impassable = instantly
+  verified" rule: impassable still ships after one report, but labelled
+  unconfirmed, and one "not there" takes it down.
+- Offline "Still there?" loop on mobile (`approaching_hazard` event plus
+  `HazardVoteQueue`).
+- Closes the hazard half of item 4's "manual promote/reject parity" gap:
+  reviewer verify/resolve/reject endpoints for hazards.
+- Details: `docs/HAZARD_VERIFICATION.md`. Still open from item 7:
+  image-based condition detection, and showing hazards on the map UI.
+
 ## Also needed before real users
 
 10. **Real authentication.** User accounts for contributors, and a
