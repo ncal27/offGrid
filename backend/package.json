@@ -1,6 +1,6 @@
 {
   "name": "@offgrid/backend",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "main": "src/index.ts",
   "scripts": {
@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@offgrid/shared": "0.1.0",
+    "@offgrid/shared": "1.0.0",
     "express": "^4.19.2",
     "express-rate-limit": "7.4.1",
     "sharp": "0.35.5"

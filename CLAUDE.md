@@ -146,6 +146,14 @@ photo confirmation, contribute+sync) rather than one-test-per-function —
 keep that framing when adding tests for new behavior instead of reverting to
 unit-testing individual methods in isolation.
 
+## Change tracking
+
+Log every change in `CHANGELOG.md` under `[Unreleased]` as
+`- <what and why>. (<person>, Claude Code, <YYYY-MM-DD>)`. `npm run changes`
+lists files that differ from the last release snapshot (`releases/`, never
+edit it). Release process and versioning: `CONTRIBUTING.md`. Direction and
+open questions: `ROADMAP.md`. Rules for other AI tools: `AGENTS.md`.
+
 ## Bugs
 
 `docs/BUGS.md` is a living log, separate from the roadmap (which tracks

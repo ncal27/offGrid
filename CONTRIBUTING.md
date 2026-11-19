@@ -1,5 +1,9 @@
 # Contributing to OffGrid
 
+**Every change goes in `CHANGELOG.md`** (who, what, why, which tool). See
+`AGENTS.md` for the rules AI tools must follow, and `ROADMAP.md` for where
+we're headed.
+
 ## Where the code lives
 
 The repo belongs to a **GitHub Organization** for the team, not to any one
@@ -50,3 +54,42 @@ yourself before starting), so two people don't fix the same thing.
 - **Dependencies:** pin exact versions for anything that parses untrusted
   input (e.g. `sharp`), and keep `npm audit` clean. CI fails on high-severity
   advisories.
+
+## Working from SharePoint (or any shared folder)
+
+If you got the project as files rather than from git:
+
+1. Copy the folder somewhere local (not inside the SharePoint/OneDrive sync
+   folder) before running `npm install`. `node_modules` is huge and will
+   choke the sync.
+2. Before you start, run `npm run changes`. It shows what already differs
+   from the last release, so you know what's yours and what isn't.
+3. Make your changes (by hand or with any AI tool), then run `npm run check`.
+4. Run `npm run changes` again and make sure every file it lists is described
+   in `CHANGELOG.md` under `[Unreleased]`. It warns if nothing is logged.
+5. Upload only the files you changed, plus `CHANGELOG.md`. Never upload
+   `node_modules`, and never edit anything in `releases/`.
+
+## Versioning
+
+[Semantic Versioning](https://semver.org/), `MAJOR.MINOR.PATCH`:
+
+- **PATCH** (1.0.1): bug fixes only.
+- **MINOR** (1.1.0): new features that don't break existing data or APIs.
+- **MAJOR** (2.0.0): breaking changes, e.g. a changed trip-package format
+  that old app versions can't read.
+
+To cut a release (the release owner does this):
+
+1. `npm run check` passes and `CHANGELOG.md` `[Unreleased]` is complete.
+2. Move the `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD`
+   heading and set `"version"` in every `package.json`.
+3. `npm run release:snapshot -- X.Y.Z` records the baseline in `releases/`
+   and updates `VERSION`.
+4. In git: commit, then `git tag vX.Y.Z`. On SharePoint: also upload a zip
+   named `offgrid-vX.Y.Z.zip` to a `Releases` folder. Never overwrite one.
+
+**Rolling back:** restore the files from the last good release (the git tag,
+or the release zip), log it in the changelog under `### Removed` with the
+reason, and cut a new PATCH or MINOR version. Never re-use or edit an old
+version number.

@@ -1,7 +1,7 @@
 {
   "name": "offgrid",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "OffGrid: plan trails online, download them for fully offline navigation, and confirm your position in the field with photo-based landmark matching.",
   "workspaces": [
     "packages/*",
@@ -14,7 +14,9 @@
     "test:mobile": "npm run test --workspace mobile",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check": "npm run typecheck && npm test",
-    "dev:backend": "npm run dev --workspace backend"
+    "dev:backend": "npm run dev --workspace backend",
+    "changes": "node scripts/changes.mjs diff",
+    "release:snapshot": "node scripts/changes.mjs snapshot"
   },
   "license": "UNLICENSED",
   "engines": {

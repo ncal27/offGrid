@@ -1,13 +1,13 @@
 {
   "name": "@offgrid/mobile",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "test": "jest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@offgrid/shared": "0.1.0"
+    "@offgrid/shared": "1.0.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
