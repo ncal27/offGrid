@@ -29,6 +29,7 @@ differs from the last release.
 ### Added
 
 ### Changed
+- Release tags are named `X.Y.Z` without a "v" (e.g. `1.0.0`), matching the published 1.0.0 release; docs updated. (Team, Claude Code, 2026-11-19)
 
 ### Fixed
 
@@ -40,7 +41,7 @@ differs from the last release.
 
 The baseline, cut from `main` on 2026-11-19 (including the hazard
 confidence tiers). Everything after this is tracked against it
-(`releases/v1.0.0.manifest.json`, git tag `v1.0.0`).
+(`releases/v1.0.0.manifest.json`, git tag `1.0.0`).
 
 ### Added
 - Core loop: plan a trail online, download a self-contained trip package, navigate offline by GPS, confirm position by photo, contribute photos and hazard reports offline, sync on reconnect.

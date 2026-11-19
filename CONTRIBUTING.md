@@ -90,7 +90,8 @@ To cut a release (the release owner does this):
    heading and set `"version"` in every `package.json`.
 3. `npm run release:snapshot -- X.Y.Z` records the baseline in `releases/`
    and updates `VERSION`.
-4. In git: commit, then `git tag vX.Y.Z`. On SharePoint: also upload a zip
+4. In git: commit, then tag it `X.Y.Z` (no "v", e.g. `1.1.0`) and publish a
+   GitHub Release for it. On SharePoint: also upload a zip
    named `offgrid-vX.Y.Z.zip` to a `Releases` folder. Never overwrite one.
 
 **Rolling back:** restore the files from the last good release (the git tag,
