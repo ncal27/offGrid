@@ -30,7 +30,11 @@ npm test             # runs backend + mobile test suites
 npm run test:backend
 npm run test:mobile
 npm run dev:backend  # starts the API on :4000
+npm run demo         # end-to-end walkthrough against the real API
 ```
+
+The phone app lives in `app/` (Expo). **Start with `HANDOFF.md`**: it covers
+how to run the app on your phone and what to work on next.
 
 Requires Node 20+. Install, typecheck and all tests run clean (they're also
 run by CI on every push/PR, see `.github/workflows/ci.yml`).

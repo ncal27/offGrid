@@ -20,6 +20,8 @@ export interface AppOptions {
    * X-Forwarded-For without a proxy lets clients spoof their IP.
    */
   trustProxy?: number | boolean;
+  /** Comma-separated browser origins allowed to call the API (overrides OFFGRID_CORS_ORIGINS). */
+  corsOrigins?: string;
 }
 
 const DEFAULT_WRITE_RATE_LIMIT = { windowMs: 15 * 60 * 1000, max: 100 };
@@ -37,6 +39,34 @@ export function createApp(options: AppOptions = {}) {
       'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
       'Referrer-Policy': 'no-referrer',
     });
+    next();
+  });
+
+  // CORS, needed only when the app runs in a web browser (Expo web). Phones
+  // don't send CORS checks. Only origins listed explicitly are allowed, never
+  // "*": set OFFGRID_CORS_ORIGINS to a comma-separated list, otherwise only the
+  // local Expo dev server is allowed.
+  const corsOrigins = new Set(
+    (options.corsOrigins ?? process.env.OFFGRID_CORS_ORIGINS ?? 'http://localhost:8081')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+  );
+  app.use((req, res, next) => {
+    const origin = req.get('origin');
+    if (origin && corsOrigins.has(origin)) {
+      res.set({
+        'Access-Control-Allow-Origin': origin,
+        Vary: 'Origin',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '600',
+      });
+      if (req.method === 'OPTIONS') {
+        res.status(204).end();
+        return;
+      }
+    }
     next();
   });
 

@@ -19,9 +19,12 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSy
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+// OFFGRID_ROOT lets tests point the script at a scratch folder.
+const ROOT = process.env.OFFGRID_ROOT ?? join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const RELEASES = join(ROOT, 'releases');
-const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', 'releases', '.vs', '.idea']);
+// Build output and caches git also ignores. Without '.expo'/'web-build', every
+// app build showed up as unlogged changes (BUG-018).
+const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', 'releases', '.vs', '.idea', '.expo', 'web-build']);
 const IGNORE_FILES = [/\.zip$/i, /\.log$/i, /^\.DS_Store$/, /^Thumbs\.db$/i, /^desktop\.ini$/i, /^~\$/, /^\.env$/];
 
 function walk(dir, out = []) {
@@ -76,9 +79,12 @@ if (cmd === 'snapshot') {
     process.exit(1);
   }
   mkdirSync(RELEASES, { recursive: true });
+  // Write VERSION *before* fingerprinting. Doing it after meant the snapshot
+  // held the old version number, so right after a release `npm run changes`
+  // reported VERSION as modified (BUG-019).
+  writeFileSync(join(ROOT, 'VERSION'), `${arg}\n`);
   const files = currentFiles();
   writeFileSync(out, JSON.stringify({ version: arg, createdAt: new Date().toISOString(), files }, null, 2) + '\n');
-  writeFileSync(join(ROOT, 'VERSION'), `${arg}\n`);
   console.log(`Recorded release ${arg} (${Object.keys(files).length} files) in releases/v${arg}.manifest.json`);
   console.log('Next: move the "Unreleased" notes in CHANGELOG.md under this version, and set "version" in each package.json.');
 } else if (cmd === 'diff') {

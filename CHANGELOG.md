@@ -27,11 +27,16 @@ differs from the last release.
 ## [Unreleased]
 
 ### Added
+- `npm run demo`: end-to-end walkthrough against the real API (plan, download, hazard tiers climbing with confirmations, photo upload, bad input refused). (Team, Claude Code, 2026-11-24)
+- Expo app skeleton in `app/` (SDK 58): disclaimer, trail list, trip download, drawn route with hazards coloured by confidence tier, report hazard, "Not there", and a "Demo: simulate another hiker" button. Runs in Expo Go and in a browser. (Team, Claude Code, 2026-11-24)
+- Backend CORS for the browser version of the app: explicit allow-list only (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never a wildcard. Tested. (Team, Claude Code, 2026-11-24)
+- `HANDOFF.md`: how to run everything, and the next tasks in priority order. CI now also typechecks the app. (Team, Claude Code, 2026-11-24)
 
 ### Changed
 - Release tags are named `X.Y.Z` without a "v" (e.g. `1.0.0`), matching the published 1.0.0 release; docs updated. (Team, Claude Code, 2026-11-19)
 
 ### Fixed
+- BUG-018: `npm run changes` no longer lists Expo build caches (`.expo`, `web-build`) as changes. BUG-019: cutting a release no longer leaves `VERSION` reported as changed. Both have regression tests in `scripts/changes.test.mjs`, now part of `npm run check` and CI. (Team, Claude Code, 2026-11-24)
 
 ### Removed
 

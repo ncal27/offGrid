@@ -389,3 +389,18 @@ describe('Use case: internal failures are reported honestly (Ironhide: BUG-016)'
     expect(res.body).toEqual({ error: 'internal_server_error' });
   });
 });
+
+describe('Use case: the app runs in a web browser (CORS)', () => {
+  const app = createApp({ writeRateLimit: false, corsOrigins: 'http://localhost:8081' });
+
+  it('allows the configured app origin, including the preflight request', async () => {
+    const pre = await request(app).options('/hazards/reports').set('Origin', 'http://localhost:8081');
+    expect(pre.status).toBe(204);
+    expect(pre.headers['access-control-allow-origin']).toBe('http://localhost:8081');
+  });
+
+  it('gives other websites no CORS permission (never a wildcard)', async () => {
+    const res = await request(app).get('/health').set('Origin', 'https://evil.example');
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+});

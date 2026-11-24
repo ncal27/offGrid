@@ -64,6 +64,8 @@ moderation, duplicate and near-duplicate detection.
 ## Request-level protections (`backend/src/app.ts`)
 
 - Body limits: 15MB only on `/contributions/photos`, 100kb elsewhere (BUG-010).
+- CORS (browser version of the app only): explicit origin allow-list
+  (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never `*`.
 - Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are
   self-reported, so this is the limit that actually holds. Behind a proxy,
   pass `createApp({ trustProxy: 1 })` or every user shares one IP.

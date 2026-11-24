@@ -1,0 +1,123 @@
+# Handoff: where OffGrid is (2026-11-24)
+
+Read this first if you're picking the project up. Rules for changing anything:
+log it in `CHANGELOG.md`, follow the Ironhide protocol (every bug fix gets a
+regression test), run `npm run check`, and work on a branch and open a pull
+request into `main` (the project lead reviews and decides releases). AI tools:
+see `AGENTS.md`.
+
+## What works today (all verified)
+
+- **Backend API** (`backend/`): trails, offline trip packages, photo uploads
+  (sanitized), hazard reports with Waze-style confidence tiers, reviewer
+  endpoints. 127 automated tests.
+- **`npm run demo`**: starts the real API, walks through a hiker's day
+  (plan, download, report a hazard, others confirm it, upload a photo, bad
+  input refused), then stops the server. Run this first to see it work.
+- **Phone app skeleton** (`app/`, Expo SDK 58): disclaimer, trail list, trip
+  download, route drawing with hazards colour-coded by confidence tier,
+  report a hazard, "Not there", and a **"Demo: simulate another hiker"**
+  button. Tested in a browser against the real API.
+
+![App screenshot](docs/img/app-trail-screen.png)
+
+## Run it
+
+You need Node 20+.
+
+```bash
+npm install
+npm run check      # typecheck + all tests
+npm run demo       # scripted end-to-end walkthrough
+```
+
+### The app on your phone (Expo Go)
+
+1. Install **Expo Go** from the App Store or Play Store.
+2. Laptop and phone on the **same Wi-Fi**. Find your laptop's IP
+   (Windows: `ipconfig` → "IPv4 Address"; Mac: `ipconfig getifaddr en0`).
+3. Terminal 1: start the API: `npm run dev:backend` (port 4000).
+   On Windows, allow Node through the firewall when asked.
+4. Terminal 2, in the `app` folder:
+
+   ```bash
+   cd app
+   npm install
+   ```
+
+   Then set the API address to your laptop's IP and start Expo.
+
+   PowerShell:
+   ```powershell
+   $env:EXPO_PUBLIC_API_URL="http://192.168.1.20:4000"; npx expo start
+   ```
+   Mac/Linux:
+   ```bash
+   EXPO_PUBLIC_API_URL=http://192.168.1.20:4000 npx expo start
+   ```
+5. Scan the QR code (iPhone: Camera app; Android: inside Expo Go).
+
+Can't connect? Check the IP is the laptop's, not `localhost`, and that both
+devices are on the same network. University Wi-Fi often blocks
+device-to-device traffic: use a phone hotspot or `npx expo start --tunnel`.
+
+### The app in a browser
+
+```bash
+npm run dev:backend
+```
+
+```bash
+cd app
+npx expo start --web
+```
+
+The API only accepts browser requests from `http://localhost:8081` by
+default. For any other address, set `OFFGRID_CORS_ORIGINS` on the backend.
+
+## Not done yet: next tasks, in priority order
+
+Pick one, put your name on it in the team chat, branch, and open a PR.
+
+1. **Wellesley trails from OpenStreetMap** (blocked in the Claude cloud
+   session, works from a laptop). Write `scripts/import-osm-trails.mjs`: query
+   the Overpass API (`https://overpass-api.de/api/interpreter`) for 3–5
+   named paths in Wellesley (Brook Path, Centennial Reservation, Rocky
+   Ledges/Boulder Brook, Elm Bank Riverside Trail, Sudbury Aqueduct), stitch
+   each trail's ways into one `routeLine`, add 2–4 waypoints (trailheads,
+   viewpoints, bridges), and save them as `Trail` objects the backend loads
+   alongside `backend/src/data/fixtures.ts`. Keep "© OpenStreetMap
+   contributors" visible (it already is in the app footer). Check the
+   result against the town's trail maps.
+2. **Live GPS on the trail** (`expo-location`): show "you are here" on the
+   route, feed fixes to `OfflineNavigator` (`mobile/src/core`) for on/off-route
+   and "approaching hazard → Still there?" prompts. Using the shared mobile
+   code from the app needs a `metro.config.js` with `watchFolders` pointing at
+   `../mobile` and `../packages`.
+3. **Real offline storage**: save the downloaded package on the phone
+   (`expo-file-system`) by implementing `StorageAdapter`, so the trail works
+   in airplane mode. This is the core of the demo.
+4. **Supabase** (needs one teammate's free account): create a project, turn
+   on anonymous sign-in, add tables for hazards, votes and contributions,
+   and replace the in-memory stores in `backend/src/services/`. Without it,
+   all hazards disappear whenever the server restarts.
+5. **Camera + photo matching spike**: check whether a ready-made model
+   (e.g. MobileNet via TensorFlow.js) runs inside Expo Go. If not, match on
+   the server when online (see `ROADMAP.md`).
+6. **Real map tiles** (`react-native-maps`, works in Expo Go) to replace the
+   drawn route.
+7. **Face blurring** for uploaded photos (open-source face detection on the
+   server; reject photos where people are the main subject).
+8. **Deploy the API** to Render's free tier for the demo.
+
+## Known issues and limits
+
+- The app keeps everything in memory: the hiker ID changes each launch
+  (sign-in is task 4), and the trip isn't stored offline yet (task 3).
+- Hazard reports from the app use the first waypoint's location, not real GPS (task 2).
+- The app has no automated tests yet. CI typechecks it.
+- `npm audit` in `app/` shows 3 moderate advisories in Expo's build tooling
+  (a `minimatch` denial-of-service issue), not in code shipped to phones.
+  The fix needs a breaking Expo upgrade; revisit at the next Expo SDK.
+- The Claude cloud session can't reach OpenStreetMap or Expo's servers yet,
+  which is why task 1 is listed for a laptop.

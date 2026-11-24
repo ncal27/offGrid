@@ -20,4 +20,10 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:scripts
       - run: npm audit --audit-level=high
+      - name: Typecheck the Expo app
+        working-directory: app
+        run: |
+          npm ci
+          npx tsc --noEmit

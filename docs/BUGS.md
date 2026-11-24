@@ -23,6 +23,8 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 | BUG-011 – BUG-013 | `mobile/test/integration/untrustedInput.test.ts` |
 | BUG-016 | `securityHardening.test.ts` ("internal failures are reported honestly"), shown to fail with the bug reintroduced |
 | BUG-017 | `hazardReporting.test.ts` ("ships an expiresAt that matches when it actually stops being shared"), shown to fail with the bug reintroduced |
+| BUG-018 | `scripts/changes.test.mjs` ("ignores build caches like app/.expo"), shown to fail with the bug reintroduced |
+| BUG-019 | `scripts/changes.test.mjs` ("reports nothing changed right after a release snapshot"), shown to fail with the bug reintroduced |
 
 ## Review log
 
@@ -38,6 +40,27 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 _None currently._
 
 ## Fixed
+
+### BUG-019 — right after cutting a release, `npm run changes` reported VERSION as changed
+
+- **Severity:** Low (misleading change report after every release from 1.1.0 on).
+- **Where:** `snapshot` in `scripts/changes.mjs`.
+- **What happened:** The snapshot fingerprinted every file and *then* wrote
+  the new version number into `VERSION`, so the snapshot held the old number.
+  Invisible at 1.0.0 only because `VERSION` already said 1.0.0.
+- **Fix:** Write `VERSION` first, then fingerprint.
+- **How it was caught:** The new test for BUG-018 ran the tracker in an
+  empty folder and saw `VERSION` reported as added.
+
+### BUG-018 — the change tracker reported the app's build cache as project changes
+
+- **Severity:** Low (noise that hides real unlogged changes).
+- **Where:** `IGNORE_DIRS` in `scripts/changes.mjs`.
+- **What happened:** Expo writes build caches to `app/.expo/` (and
+  `web-build/`). Git ignores them, but the tracker didn't, so every app build
+  showed up as unlogged changes.
+- **Fix:** Ignore `.expo` and `web-build`, like git does.
+- **How it was caught:** Running `npm run changes` after the first app build.
 
 ### BUG-017 — hazards stayed shared after their own expiry time (rounding before comparing)
 

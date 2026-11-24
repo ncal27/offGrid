@@ -13,11 +13,12 @@
     "test:backend": "npm run test --workspace backend",
     "test:mobile": "npm run test --workspace mobile",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "check": "npm run typecheck && npm test",
+    "check": "npm run typecheck && npm test && npm run test:scripts",
     "dev:backend": "npm run dev --workspace backend",
     "changes": "node scripts/changes.mjs diff",
     "release:snapshot": "node scripts/changes.mjs snapshot",
-    "demo": "node scripts/demo.mjs"
+    "demo": "node scripts/demo.mjs",
+    "test:scripts": "node --test scripts/changes.test.mjs"
   },
   "license": "UNLICENSED",
   "engines": {
