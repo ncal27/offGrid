@@ -28,7 +28,7 @@ const arg = (name, fallback) => {
 const PORT = arg('port', 8080);
 const MINUTES = arg('minutes', 30);
 const API_PORT = PORT + 1;
-const API_PREFIXES = ['/trails', '/hazards', '/contributions', '/health'];
+const API_PREFIXES = ['/trails', '/hazards', '/contributions', '/photos', '/health'];
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.ico': 'image/x-icon', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' };
 
 if (!existsSync(join(DIST, 'index.html'))) {

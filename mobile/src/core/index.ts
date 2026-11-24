@@ -10,3 +10,4 @@ export * from './HazardReportQueue';
 export * from './UpdateChecker';
 export * from './HazardVoteQueue';
 export * from './hazards';
+export * from './imageFingerprint';

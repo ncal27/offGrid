@@ -17,7 +17,7 @@
  */
 import { writeFileSync } from 'fs';
 import { join } from 'path';
-import { isSafeText, LandmarkPhoto, LatLng, Season, Trail, TrailBranch, Waypoint, WaypointKind } from '@offgrid/shared';
+import { isSafeText, LandmarkPhoto, LatLng, Season, seasonOf, Trail, TrailBranch, Waypoint, WaypointKind } from '@offgrid/shared';
 import { stitchWays } from '../src/services/osmImportService';
 import { haversineDistanceMeters } from '../src/geo';
 
@@ -54,6 +54,19 @@ async function getJson(url: string, init?: RequestInit): Promise<any> {
   }
 }
 
+/**
+ * A ~500px version of a Wikimedia image for lists and offline storage.
+ * Wikimedia picks the size it actually returns (1280px was seen, or the
+ * original file when it's small), so don't assume a size: assuming "1024px"
+ * left full-size images as "thumbnails" (BUG-021).
+ */
+export function thumbnailFor(url: string, originalWidth: number): string {
+  if (/\/\d+px-/.test(url)) return url.replace(/\/\d+px-/, '/500px-');
+  if (!originalWidth || originalWidth <= 500) return url; // already small
+  const m = /^(https:\/\/upload\.wikimedia\.org\/wikipedia\/commons)\/([0-9a-f]\/[0-9a-f]{2})\/([^?/]+)/.exec(url);
+  return m ? `${m[1]}/thumb/${m[2]}/${m[3]}/500px-${m[3]}` : url;
+}
+
 const pathLength = (pts: LatLng[]) => pts.slice(1).reduce((d, p, i) => d + haversineDistanceMeters(pts[i], p), 0);
 function simplify(points: LatLng[], max: number): LatLng[] {
   if (points.length <= max) return points;
@@ -62,13 +75,6 @@ function simplify(points: LatLng[], max: number): LatLng[] {
 }
 const round = (p: LatLng): LatLng => ({ lat: Math.round(p.lat * 1e6) / 1e6, lng: Math.round(p.lng * 1e6) / 1e6 });
 
-function seasonOf(date: Date): Season {
-  const m = date.getUTCMonth(); // New England seasons
-  if (m === 11 || m <= 1) return 'winter';
-  if (m <= 4) return 'spring';
-  if (m <= 7) return 'summer';
-  return 'fall';
-}
 const stripHtml = (s: string) => s.replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&#039;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
 const FREE_LICENSE = /^(CC0|CC BY(-SA)? [\d.]+|CC BY(-SA)?|Public domain|PD.*)$/i;
 const NOT_A_LANDSCAPE = /iNaturalist|\.(svg|tiff?|pdf|gif)$|map|logo|diagram|chart|plan of/i;
@@ -180,7 +186,7 @@ const TITLE_TO_PLACE: [RegExp, string][] = [
 async function buildPhotos(trail: Trail): Promise<LandmarkPhoto[]> {
   const api = 'https://commons.wikimedia.org/w/api.php';
   const common = {
-    action: 'query', prop: 'imageinfo|coordinates', iiprop: 'url|extmetadata|mime', iiurlwidth: '1024',
+    action: 'query', prop: 'imageinfo|coordinates', iiprop: 'url|extmetadata|mime|size', iiurlwidth: '1024',
     iiextmetadatafilter: 'DateTimeOriginal|Artist|LicenseShortName|LicenseUrl|ObjectName', format: 'json',
   };
   const pages = new Map<string, any>();
@@ -232,7 +238,7 @@ async function buildPhotos(trail: Trail): Promise<LandmarkPhoto[]> {
       status: 'official',
       capturedAt: when.toISOString(),
       uri: url,
-      thumbnailUrl: url.replace(/\/1024px-/, '/400px-'),
+      thumbnailUrl: thumbnailFor(url, info.width),
       season: seasonOf(when),
       title: isSafeText(title, 120) ? title : 'Photo',
       attribution: {

@@ -27,6 +27,10 @@ differs from the last release.
 ## [Unreleased]
 
 ### Added
+- "Go offline" button at the top: every network request the app attempts while offline is blocked and counted, with an on-screen "Internet requests blocked: N · sent: 0" as proof for the demo. (Team, Claude Code, 2026-11-24)
+- Reference photos are saved on the device when a trail is downloaded, so the photo gallery and viewer work offline. (Team, Claude Code, 2026-11-24)
+- "Where am I?": take or choose a photo and the app compares it with the saved reference photos, fully offline, giving a best-guess place and a confidence; low confidence asks for another photo; several photos are combined. Uses a built-in image fingerprint (colour, layout, edges), a stand-in for a trained model. Leave-one-out on the real Blue Hills photos: 10 of 11 placed correctly. (Team, Claude Code, 2026-11-24)
+- Photo sharing loop: high-confidence (or confirmed) "Where am I?" photos can be shared as reference photos, queued offline and uploaded on reconnect; low-confidence photos stay on the phone. Promoted hiker photos are now served by the API (`GET /photos/:id.jpg`) and ship in trip packages as new references. (Team, Claude Code, 2026-11-24)
 - Blue Hills (Great Blue Hill & Skyline Trail), a real trail network with 16 side trails and 7 places (Trailside Museum trailhead, summit, Eliot Tower, Little Blue/Wolcott/Hemenway Hills, Breakneck Ledge), built from OpenStreetMap by `npm run data:blue-hills`. (Team, Claude Code, 2026-11-24)
 - Seasonal reference photos: 12 free-licensed Wikimedia Commons photos tied to places, with season from the capture date and the photographer/licence/link kept and shown. Only free licences and Wikimedia's own image hosts are accepted. (Team, Claude Code, 2026-11-24)
 - Interactive map: zoom (+/−/Fit), drag to pan, tap a place to zoom in and see its photos, side trails drawn dashed and tappable for hazards. Photo gallery filters by season (current season marked) and place; tap a photo for full size with credit. (Team, Claude Code, 2026-11-24)
@@ -44,6 +48,7 @@ differs from the last release.
 - Release tags are named `X.Y.Z` without a "v" (e.g. `1.0.0`), matching the published 1.0.0 release; docs updated. (Team, Claude Code, 2026-11-19)
 
 ### Fixed
+- BUG-021: Blue Hills "thumbnails" were full-size photos (Wikimedia returned 1280px, not the assumed 1024px). Data regenerated with 500px thumbnails; regression test added (Ironhide). (Team, Claude Code, 2026-11-24)
 - BUG-020: a hazard's severity could be silently downgraded to "minor" when its reporter later said "not there". Regression test added (Ironhide). (Team, Claude Code, 2026-11-24)
 - BUG-018: `npm run changes` no longer lists Expo build caches (`.expo`, `web-build`) as changes. BUG-019: cutting a release no longer leaves `VERSION` reported as changed. Both have regression tests in `scripts/changes.test.mjs`, now part of `npm run check` and CI. (Team, Claude Code, 2026-11-24)
 

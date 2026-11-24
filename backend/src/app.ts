@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { trailsRouter } from './routes/trails';
 import { contributionsRouter } from './routes/contributions';
 import { hazardsRouter } from './routes/hazards';
+import { photosRouter } from './routes/photos';
 
 export interface AppOptions {
   /**
@@ -97,6 +98,7 @@ export function createApp(options: AppOptions = {}) {
   app.use('/trails', trailsRouter);
   app.use('/contributions', contributionsRouter);
   app.use('/hazards', hazardsRouter);
+  app.use('/photos', photosRouter);
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   app.use((_req, res) => {

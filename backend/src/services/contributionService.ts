@@ -1,4 +1,4 @@
-import { ContributedPhotoUpload, ContributionAck, LandmarkPhoto } from '@offgrid/shared';
+import { ContributedPhotoUpload, ContributionAck, LandmarkPhoto, seasonOf } from '@offgrid/shared';
 import { addPromotedPhoto } from './landmarkPhotoService';
 import { resolveWaypointId, WAYPOINT_DISTANCE_TOLERANCE_METERS, waypointExistsOnTrail } from './waypointResolution';
 
@@ -108,14 +108,20 @@ function promoteToLandmarkPhoto(upload: ContributedPhotoUpload, waypointId: stri
     status: 'promoted',
     capturedAt: upload.capturedAt,
     location: upload.location,
-    // Every path segment here has passed isSafeId and been checked against
-    // the trail store, so this can't be used for path traversal.
-    uri: `contributed-assets/${upload.trailId}/${waypointId}/${upload.id}.jpg`,
+    // Served by GET /photos/:id.jpg (relative to the API). The id passed
+    // isSafeId, so this can't be used for path traversal.
+    uri: `/photos/promoted-${upload.id}.jpg`,
+    thumbnailUrl: `/photos/promoted-${upload.id}.jpg`,
+    season: seasonOf(new Date(upload.capturedAt)),
+    title: 'Hiker photo',
+    attribution: { author: 'An OffGrid hiker', license: 'Shared with OffGrid', sourceUrl: `/photos/promoted-${upload.id}.jpg` },
     contributorId: upload.contributorId,
-    // No embedding yet: real embedding generation for contributed photos is
-    // still open work (docs/roadmap.md item 5).
+    // No stored embedding: phones fingerprint reference photos themselves
+    // after download (mobile/src/core/imageFingerprint.ts), so a promoted
+    // photo becomes matchable as soon as it ships in a package.
   };
-  addPromotedPhoto(photo);
+  // upload.imageBase64 is the sanitized, re-encoded JPEG (never client bytes).
+  addPromotedPhoto(photo, Buffer.from(upload.imageBase64, 'base64'));
   return photo;
 }
 

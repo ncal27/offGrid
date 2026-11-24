@@ -26,7 +26,23 @@ export function getShippablePhotosForTrail(trailId: string): LandmarkPhoto[] {
   return getAllPhotosForTrail(trailId).filter((p) => p.status === 'official' || p.status === 'promoted');
 }
 
-export function addPromotedPhoto(photo: LandmarkPhoto): void {
+/**
+ * Image bytes for promoted hiker photos (already sanitized and re-encoded by
+ * imageValidation), served at GET /photos/:id.jpg so phones can download them
+ * as reference photos. Only PROMOTED photos are ever stored here; pending
+ * contributions are never served.
+ */
+let promotedImages = new Map<string, Buffer>();
+
+export function getPromotedImage(photoId: string): Buffer | null {
+  const image = promotedImages.get(photoId);
+  if (!image) return null;
+  const photo = [...photosByTrailId.values()].flat().find((p) => p.id === photoId);
+  return photo && photo.status === 'promoted' ? image : null;
+}
+
+export function addPromotedPhoto(photo: LandmarkPhoto, jpeg?: Buffer): void {
+  if (jpeg) promotedImages.set(photo.id, jpeg);
   const existing = photosByTrailId.get(photo.trailId) ?? [];
   photosByTrailId.set(photo.trailId, [...existing, photo]);
 }
@@ -34,4 +50,5 @@ export function addPromotedPhoto(photo: LandmarkPhoto): void {
 /** Test-only helper to reset in-memory state between test cases. */
 export function _resetForTests(): void {
   photosByTrailId = seedPhotos();
+  promotedImages = new Map();
 }

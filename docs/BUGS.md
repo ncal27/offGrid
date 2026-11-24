@@ -26,6 +26,7 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 | BUG-018 | `scripts/changes.test.mjs` ("ignores build caches like app/.expo"), shown to fail with the bug reintroduced |
 | BUG-019 | `scripts/changes.test.mjs` ("reports nothing changed right after a release snapshot"), shown to fail with the bug reintroduced |
 | BUG-020 | `hazardReporting.test.ts` ("keeps the reported severity when the reporter later says not there"), shown to fail with the bug reintroduced |
+| BUG-021 | `blueHills.test.ts` ("ships real thumbnails, smaller than the full photo"), shown to fail on the buggy data |
 
 ## Review log
 
@@ -41,6 +42,19 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 _None currently._
 
 ## Fixed
+
+### BUG-021 — Blue Hills "thumbnails" were full-size photos
+
+- **Severity:** Low/Medium (slow offline downloads and photo matching on phones).
+- **Where:** `thumbnailFor()` in `backend/scripts/buildBlueHills.ts`.
+- **What happened:** The builder assumed Wikimedia returns 1024px images and
+  swapped "1024px" for a smaller size. Wikimedia actually returned 1280px (or
+  the original file when small), so nothing was swapped and every thumbnail
+  was the full image.
+- **Fix:** Swap whatever size is in the URL for a standard 500px size, and
+  build the thumbnail URL for small originals. Data regenerated.
+- **How it was caught:** Preparing the offline photo-matching test: the test
+  photo turned out to be byte-identical to the saved "thumbnail".
 
 ### BUG-020 — a hazard's severity was silently downgraded to "minor"
 

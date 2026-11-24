@@ -54,6 +54,16 @@ describe('Use case: plan the Blue Hills (Great Blue Hill) hike with seasonal pho
     }
   });
 
+  it('ships real thumbnails, smaller than the full photo (Ironhide: BUG-021)', async () => {
+    const { landmarkPhotos } = await download();
+    for (const p of landmarkPhotos.filter((x: { source: string }) => x.source === 'official')) {
+      expect(p.thumbnailUrl).not.toBe(p.uri);
+      const px = Number(/\/(\d+)px-/.exec(p.thumbnailUrl)?.[1]);
+      expect(px).toBeGreaterThan(0);
+      expect(px).toBeLessThanOrEqual(500);
+    }
+  });
+
   it('lets hikers report a hazard on a side trail', async () => {
     const { trail } = await download();
     const branchPoint = trail.branches[0].line[Math.floor(trail.branches[0].line.length / 2)];

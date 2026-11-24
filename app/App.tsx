@@ -1,4 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
+import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
@@ -10,7 +11,6 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -29,6 +29,8 @@ import type {
   TripPackage,
   Waypoint,
 } from '../packages/shared/src/types';
+// Shared, platform-agnostic offline photo matching (resolved via metro.config.js).
+import { confidenceLevel, decodeJpeg, fingerprint, rankPlaces, ReferenceEmbedding } from '../mobile/src/core/imageFingerprint';
 
 /**
  * OffGrid app (demo build). Talks to the real backend.
@@ -77,14 +79,58 @@ class OfflineError extends Error {
   }
 }
 
+// ---- The "Go offline" button: a guard around EVERY network request --------------
+// While offline, each fetch the app attempts is blocked here and counted. The
+// on-screen counter is the demo's proof that nothing reaches the internet.
+// (For the strongest proof on a phone, also switch on airplane mode.)
+const net = { offline: false, blocked: 0, listeners: new Set<() => void>() };
+const realFetch = globalThis.fetch.bind(globalThis);
+globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+  if (net.offline) {
+    net.blocked++;
+    net.listeners.forEach((l) => l());
+    return Promise.reject(new OfflineError());
+  }
+  return realFetch(...args);
+}) as typeof fetch;
+function useBlockedCount() {
+  const [n, setN] = useState(net.blocked);
+  useEffect(() => {
+    const l = () => setN(net.blocked);
+    net.listeners.add(l);
+    return () => {
+      net.listeners.delete(l);
+    };
+  }, []);
+  return n;
+}
+
+/** Photos/assets the API serves (e.g. promoted hiker photos) have relative URLs. */
+const assetUrl = (u: string) => (u.startsWith('/') ? `${API_URL}${u}` : u);
+
+async function toDataUri(url: string): Promise<string> {
+  const blob = await (await fetch(url)).blob();
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error('Could not read photo'));
+    r.readAsDataURL(blob);
+  });
+}
+
 /** Something done while offline, waiting to be sent. */
 type QueuedUpload =
   | { kind: 'report'; trailId: string; body: Record<string, unknown>; label: string; location: LatLng }
-  | { kind: 'vote'; trailId: string; body: Record<string, unknown>; label: string };
+  | { kind: 'vote'; trailId: string; body: Record<string, unknown>; label: string }
+  | { kind: 'photo'; trailId: string; body: Record<string, unknown>; label: string; preview: string };
+const UPLOAD_PATH: Record<QueuedUpload['kind'], string> = {
+  report: '/hazards/reports',
+  vote: '/hazards/votes',
+  photo: '/contributions/photos',
+};
 
-async function api<T>(offline: boolean, method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
-  // The "Simulate no internet" switch: no request leaves the app at all.
-  if (offline) throw new OfflineError();
+async function api<T>(_offline: boolean, method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  // While offline the fetch guard above blocks (and counts) this request.
   const res = await fetch(`${API_URL}${path}`, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
@@ -388,7 +434,7 @@ function seasonOf(d: Date): Season {
   if (m <= 7) return 'summer';
   return 'fall';
 }
-const isWebImage = (p: LandmarkPhoto) => /^https:\/\//.test(p.thumbnailUrl ?? p.uri);
+const isWebImage = (p: LandmarkPhoto) => /^(https:\/\/|\/photos\/)/.test(p.thumbnailUrl ?? p.uri);
 
 function PhotoGallery({
   pkg,
@@ -397,6 +443,8 @@ function PhotoGallery({
   season,
   onSeason,
   onOpen,
+  photoSrc,
+  pending,
 }: {
   pkg: TripPackage;
   placeId: string | null;
@@ -404,6 +452,8 @@ function PhotoGallery({
   season: Season | 'all';
   onSeason: (s: Season | 'all') => void;
   onOpen: (p: LandmarkPhoto) => void;
+  photoSrc: (p: LandmarkPhoto) => string | null;
+  pending: string[];
 }) {
   const all = pkg.landmarkPhotos.filter(isWebImage);
   if (all.length === 0) return null;
@@ -453,7 +503,13 @@ function PhotoGallery({
         <View style={styles.grid}>
           {shown.map((p) => (
             <Pressable key={p.id} accessibilityLabel={`Photo: ${p.title ?? 'trail photo'}`} onPress={() => onOpen(p)} style={styles.thumbWrap}>
-              <Image source={{ uri: p.thumbnailUrl ?? p.uri }} style={styles.thumb} resizeMode="cover" />
+              {photoSrc(p) ? (
+                <Image source={{ uri: photoSrc(p)! }} style={styles.thumb} resizeMode="cover" />
+              ) : (
+                <View style={[styles.thumb, styles.thumbMissing]}>
+                  <Text style={styles.thumbCaption}>Not saved offline</Text>
+                </View>
+              )}
               <Text style={styles.thumbCaption} numberOfLines={1}>
                 {p.season ? SEASON_NAMES[p.season] : ''} {p.capturedAt.slice(0, 4)}
               </Text>
@@ -461,19 +517,43 @@ function PhotoGallery({
           ))}
         </View>
       )}
-      <Text style={styles.meta}>Photos from Wikimedia Commons; tap one for the photographer and licence.</Text>
+      {pending.length > 0 && (
+        <>
+          <Text style={styles.label}>Your photos waiting to upload ({pending.length})</Text>
+          <View style={styles.grid}>
+            {pending.map((src, i) => (
+              <Image key={i} source={{ uri: src }} style={[styles.thumb, styles.thumbPending, { width: '31%' }]} accessibilityLabel="Photo waiting to upload" />
+            ))}
+          </View>
+        </>
+      )}
+      <Text style={styles.meta}>Photos from Wikimedia Commons and hikers; tap one for the credit.</Text>
     </View>
   );
 }
 
-function PhotoViewer({ photo, pkg, onClose }: { photo: LandmarkPhoto | null; pkg: TripPackage | null; onClose: () => void }) {
+function PhotoViewer({
+  photo,
+  pkg,
+  src,
+  onClose,
+}: {
+  photo: LandmarkPhoto | null;
+  pkg: TripPackage | null;
+  src: string | null;
+  onClose: () => void;
+}) {
   if (!photo || !pkg) return null;
   const place = pkg.trail.waypoints.find((w) => w.id === photo.waypointId);
   const a = photo.attribution;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.viewer}>
-        <Image source={{ uri: photo.uri }} style={styles.viewerImage} resizeMode="contain" accessibilityLabel={photo.title ?? 'Trail photo'} />
+        {src ? (
+          <Image source={{ uri: src }} style={styles.viewerImage} resizeMode="contain" accessibilityLabel={photo.title ?? 'Trail photo'} />
+        ) : (
+          <Text style={styles.viewerMeta}>This photo wasn't saved for offline use.</Text>
+        )}
         <View style={styles.viewerInfo}>
           <Text style={[styles.cardTitle, { color: '#fff' }]}>{photo.title ?? 'Trail photo'}</Text>
           <Text style={styles.viewerMeta}>
@@ -485,12 +565,138 @@ function PhotoViewer({ photo, pkg, onClose }: { photo: LandmarkPhoto | null; pkg
             </Text>
           )}
           <View style={styles.row}>
-            {a && <Button title="View on Wikimedia Commons" kind="secondary" onPress={() => Linking.openURL(a.sourceUrl)} />}
+            {a && /^https:\/\//.test(a.sourceUrl) && (
+              <Button title="View on Wikimedia Commons" kind="secondary" onPress={() => Linking.openURL(a.sourceUrl)} />
+            )}
             <Button title="Close" onPress={onClose} />
           </View>
         </View>
       </View>
     </Modal>
+  );
+}
+
+// ---- "Where am I?": match your photo against the downloaded reference photos ----
+// Runs entirely on the device (no internet): see mobile/src/core/imageFingerprint.ts.
+
+type SeriesPhoto = { id: string; base64: string; preview: string; embedding: number[] };
+const pct = (c: number) => `${Math.round(c * 100)}%`;
+
+function WhereAmI({
+  pkg,
+  refs,
+  photoSrc,
+  onShowPlace,
+  onShare,
+}: {
+  pkg: TripPackage;
+  refs: ReferenceEmbedding[];
+  photoSrc: (p: LandmarkPhoto) => string | null;
+  onShowPlace: (placeId: string) => void;
+  onShare: (photos: SeriesPhoto[], placeId: string, confidence: number) => void;
+}) {
+  const [series, setSeries] = useState<SeriesPhoto[]>([]);
+  const [problem, setProblem] = useState('');
+  const guesses = useMemo(() => rankPlaces(series.map((s) => s.embedding), refs), [series, refs]);
+  const top = guesses[0];
+  const level = top ? confidenceLevel(top.confidence) : 'low';
+  const place = top && pkg.trail.waypoints.find((w) => w.id === top.placeId);
+  const lookalike = top && pkg.landmarkPhotos.find((p) => p.id === top.bestPhotoId);
+  const lookalikeSrc = lookalike ? photoSrc(lookalike) : null;
+  const placeCount = new Set(refs.map((r) => r.placeId)).size;
+
+  const addPhoto = async (from: 'camera' | 'library') => {
+    setProblem('');
+    try {
+      if (from === 'camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) return setProblem('Camera permission is needed to take a photo.');
+      }
+      const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], base64: true, quality: 0.6, exif: false };
+      const result = from === 'camera' ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
+      if (result.canceled || !result.assets?.[0]) return;
+      const a = result.assets[0];
+      const base64 = a.base64 ?? (a.uri.startsWith('data:') ? a.uri.slice(a.uri.indexOf(',') + 1) : '');
+      const mime = a.mimeType ?? (/^data:([^;]+)/.exec(a.uri)?.[1] ?? '');
+      if (!base64 || !/jpe?g/i.test(mime || 'image/jpeg')) {
+        return setProblem('Please use a JPEG photo (phone cameras take JPEGs by default).');
+      }
+      const embedding = fingerprint(decodeJpeg(base64));
+      setSeries((s) => [...s, { id: makeId('photo'), base64, preview: `data:image/jpeg;base64,${base64}`, embedding }]);
+    } catch (e) {
+      setProblem(`Couldn't read that photo (${e instanceof Error ? e.message : e}).`);
+    }
+  };
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Where am I?</Text>
+      <Text style={styles.meta}>
+        Take a photo and OffGrid compares it with the {refs.length} reference photos of {placeCount} places saved on this
+        device. Works with no internet.
+      </Text>
+      {refs.length === 0 ? (
+        <Text style={styles.body}>No reference photos saved for this trail yet. Open it while online to save them.</Text>
+      ) : (
+        <View style={styles.row}>
+          <Button title="Take a photo" onPress={() => addPhoto('camera')} />
+          <Button title="Choose a photo" kind="secondary" onPress={() => addPhoto('library')} />
+          {series.length > 0 && <Button title="Start over" kind="secondary" onPress={() => setSeries([])} />}
+        </View>
+      )}
+      {!!problem && <Text style={styles.error}>{problem}</Text>}
+
+      {top && place && (
+        <View style={styles.guess}>
+          <Text style={styles.guessTitle}>
+            {level === 'low' ? 'Not sure yet' : `Probably ${place.name}`}
+          </Text>
+          <Text style={styles.meta}>
+            {level === 'low'
+              ? `Best guess ${place.name} at ${pct(top.confidence)}. Take another photo of something distinctive (a sign, the tower, a view).`
+              : `${pct(top.confidence)} confidence (${level}) from ${series.length} photo${series.length === 1 ? '' : 's'}.`}
+          </Text>
+          <View style={styles.row}>
+            {series.map((s) => (
+              <Image key={s.id} source={{ uri: s.preview }} style={styles.compareThumb} accessibilityLabel="Your photo" />
+            ))}
+            {lookalikeSrc && (
+              <View style={{ alignItems: 'center' }}>
+                <Image source={{ uri: lookalikeSrc }} style={[styles.compareThumb, styles.compareRef]} accessibilityLabel="Closest reference photo" />
+                <Text style={styles.thumbCaption}>closest match</Text>
+              </View>
+            )}
+          </View>
+          {guesses.slice(1, 3).map((g) => (
+            <Text key={g.placeId} style={styles.meta}>
+              {pkg.trail.waypoints.find((w) => w.id === g.placeId)?.name}: {pct(g.confidence)}
+            </Text>
+          ))}
+          <View style={styles.row}>
+            <Button title="Show on map" kind="secondary" onPress={() => onShowPlace(place.id)} />
+            {level === 'high' && (
+              <Button
+                title={`Share ${series.length === 1 ? 'photo' : `${series.length} photos`} as a reference`}
+                onPress={() => {
+                  onShare(series, place.id, top.confidence);
+                  setSeries([]);
+                }}
+              />
+            )}
+            {level === 'medium' && (
+              <Button
+                title={`Yes, I'm at ${place.name}: share`}
+                onPress={() => {
+                  onShare(series, place.id, top.confidence);
+                  setSeries([]);
+                }}
+              />
+            )}
+          </View>
+          {level === 'low' && <Text style={styles.meta}>Low-confidence photos stay on this phone and aren't shared.</Text>}
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -525,6 +731,9 @@ export default function App() {
   const [packages, setPackages] = useState<Record<string, TripPackage>>({});
   const [openTrailId, setOpenTrailId] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuedUpload[]>([]);
+  const [photoData, setPhotoData] = useState<Record<string, string>>({}); // photo id -> image saved on device
+  const [refEmbeddings, setRefEmbeddings] = useState<Record<string, ReferenceEmbedding[]>>({}); // trail id -> fingerprints
+  const blocked = useBlockedCount();
   const [picked, setPicked] = useState<LatLng | null>(null);
   const [placeId, setPlaceId] = useState<string | null>(null);
   const [season, setSeason] = useState<Season | 'all'>('all');
@@ -563,16 +772,47 @@ export default function App() {
     return p;
   };
 
+  /**
+   * Saves a trail's reference photos ON THE DEVICE (as data URIs) and
+   * fingerprints them, so the gallery and "Where am I?" work with no internet.
+   */
+  const saveForOffline = async (p: TripPackage) => {
+    const photos = p.landmarkPhotos.filter(isWebImage);
+    const saved: Record<string, string> = {};
+    const embeddings: ReferenceEmbedding[] = [];
+    for (const photo of photos) {
+      try {
+        const data = photoData[photo.id] ?? (await toDataUri(assetUrl(photo.thumbnailUrl ?? photo.uri)));
+        saved[photo.id] = data;
+        if (/^data:image\/jpe?g/i.test(data)) {
+          embeddings.push({ placeId: photo.waypointId, photoId: photo.id, embedding: fingerprint(decodeJpeg(data)) });
+        }
+      } catch {
+        // One photo failing (e.g. rate-limited) shouldn't stop the rest.
+      }
+      setStatus(`Saving photos for offline use… ${Object.keys(saved).length}/${photos.length}`);
+    }
+    setPhotoData((prev) => ({ ...prev, ...saved }));
+    setRefEmbeddings((prev) => ({ ...prev, [p.trailId]: embeddings }));
+    return Object.keys(saved).length;
+  };
+  const photoSrc = (p: LandmarkPhoto): string | null =>
+    photoData[p.id] ?? (offline ? null : assetUrl(p.thumbnailUrl ?? p.uri));
+
   const openTrail = (trailId: string) =>
     run(async () => {
       setPicked(null);
       setPlaceId(null);
-      if (!packages[trailId]) {
-        await fetchPackage(trailId);
-        setStatus('Downloaded. This trail now works with no internet.');
-      } else if (!offline) {
-        await fetchPackage(trailId); // refresh hazards while we have signal
-        setStatus('');
+      if (!offline) {
+        const firstTime = !packages[trailId];
+        const p = await fetchPackage(trailId); // first download, or refresh while we have signal
+        setOpenTrailId(trailId);
+        const n = await saveForOffline(p);
+        setStatus(
+          firstTime
+            ? `Downloaded with ${n} photo${n === 1 ? '' : 's'}. This trail now works with no internet.`
+            : `Up to date; ${n} photo${n === 1 ? '' : 's'} saved for offline.`,
+        );
       } else {
         setStatus('Opened from this device (no internet needed).');
       }
@@ -595,7 +835,7 @@ export default function App() {
         setStatus(`Saved on this device: ${item.label}. It will sync when you're back online.`);
         return;
       }
-      const ack = await api<{ message?: string }>(offline, 'POST', item.kind === 'report' ? '/hazards/reports' : '/hazards/votes', item.body);
+      const ack = await api<{ message?: string }>(offline, 'POST', UPLOAD_PATH[item.kind], item.body);
       setStatus(ack.message ?? `${item.label}: sent.`);
       await fetchPackage(item.trailId);
     });
@@ -641,8 +881,40 @@ export default function App() {
     });
   };
 
+  const goOffline = () => {
+    net.offline = true;
+    net.blocked = 0;
+    setOffline(true);
+    setStatus('Offline: the app can no longer reach the internet. Everything below runs from this device.');
+  };
+
+  /** Photos from "Where am I?" become reference-photo contributions (queued if offline). */
+  const sharePhotos = (photos: { base64: string; preview: string }[], waypointId: string, confidence: number) => {
+    if (!pkg) return;
+    const place = pkg.trail.waypoints.find((w) => w.id === waypointId);
+    for (const ph of photos) {
+      send({
+        kind: 'photo',
+        trailId: pkg.trailId,
+        label: `photo of ${place?.name ?? 'the trail'} (${Math.round(confidence * 100)}% match)`,
+        preview: ph.preview,
+        body: {
+          id: makeId('photo'),
+          trailId: pkg.trailId,
+          waypointHintId: waypointId,
+          capturedAt: new Date().toISOString(),
+          location: place?.location,
+          gpsWeakOrMissing: true, // place inferred from the photo match, not GPS
+          imageBase64: ph.base64,
+          contributorId: DEVICE_HIKER_ID,
+        },
+      });
+    }
+  };
+
   /** Back online: send everything queued, in order; stop at the first failure and keep the rest. */
   const goOnline = () => {
+    net.offline = false;
     setOffline(false);
     if (queue.length === 0) return;
     run(async () => {
@@ -650,7 +922,7 @@ export default function App() {
       const touched = new Set<string>();
       for (const item of queue) {
         try {
-          await api(false, 'POST', item.kind === 'report' ? '/hazards/reports' : '/hazards/votes', item.body);
+          await api(false, 'POST', UPLOAD_PATH[item.kind], item.body);
         } catch (e) {
           setQueue(queue.slice(sent));
           throw new Error(`Synced ${sent} of ${queue.length}; the rest will retry. (${e instanceof Error ? e.message : e})`);
@@ -704,19 +976,26 @@ export default function App() {
 
         <View style={[styles.netBar, offline && styles.netBarOffline]}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.netTitle}>{offline ? 'No internet (simulated)' : 'Online'}</Text>
+            <Text style={styles.netTitle}>{offline ? 'Offline: no internet' : 'Online'}</Text>
             <Text style={styles.meta}>
               {offline
                 ? `${queue.length} change${queue.length === 1 ? '' : 's'} saved on this device, waiting to sync`
-                : 'Flip the switch to show the app working with no signal'}
+                : 'Plan and download your trail, then go offline.'}
             </Text>
+            {offline && (
+              <Text style={styles.proof} accessibilityLabel="Blocked internet requests">
+                Internet requests blocked: {blocked} · sent: 0
+              </Text>
+            )}
           </View>
-          <Text style={styles.meta}>Simulate no internet</Text>
-          <Switch
-            accessibilityLabel="Simulate no internet"
-            value={offline}
-            onValueChange={(v) => (v ? setOffline(true) : goOnline())}
-          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={offline ? 'Go back online' : 'Go offline'}
+            onPress={offline ? goOnline : goOffline}
+            style={({ pressed }) => [styles.offlineBtn, offline && styles.offlineBtnOn, pressed && { opacity: 0.7 }]}
+          >
+            <Text style={styles.offlineBtnText}>{offline ? 'Back online' : 'Go offline'}</Text>
+          </Pressable>
         </View>
 
         {!!error && <Text style={styles.error}>{error}</Text>}
@@ -826,7 +1105,24 @@ export default function App() {
               </View>
             )}
 
-            <PhotoGallery pkg={pkg} placeId={placeId} onPlace={setPlaceId} season={season} onSeason={setSeason} onOpen={setViewerPhoto} />
+            <WhereAmI
+              pkg={pkg}
+              refs={refEmbeddings[pkg.trailId] ?? []}
+              photoSrc={photoSrc}
+              onShowPlace={(id) => setPlaceId(id)}
+              onShare={sharePhotos}
+            />
+
+            <PhotoGallery
+              pkg={pkg}
+              placeId={placeId}
+              onPlace={setPlaceId}
+              season={season}
+              onSeason={setSeason}
+              onOpen={setViewerPhoto}
+              photoSrc={photoSrc}
+              pending={queue.filter((q): q is Extract<QueuedUpload, { kind: 'photo' }> => q.kind === 'photo' && q.trailId === pkg.trailId).map((q) => q.preview)}
+            />
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Hazards ({pkg.hazards.length})</Text>
@@ -859,7 +1155,12 @@ export default function App() {
         )}
         <Text style={styles.footer}>Map data © OpenStreetMap contributors · Photos: Wikimedia Commons (credited per photo) · demo build</Text>
       </ScrollView>
-      <PhotoViewer photo={viewerPhoto} pkg={pkg} onClose={() => setViewerPhoto(null)} />
+      <PhotoViewer
+        photo={viewerPhoto}
+        pkg={pkg}
+        src={viewerPhoto ? photoData[viewerPhoto.id] ?? (offline ? null : assetUrl(viewerPhoto.uri)) : null}
+        onClose={() => setViewerPhoto(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -881,6 +1182,16 @@ const styles = StyleSheet.create({
   },
   netBarOffline: { backgroundColor: '#fdecc8' },
   netTitle: { fontSize: 15, fontWeight: '700', color: '#1b3a2a' },
+  proof: { fontSize: 13, fontWeight: '700', color: '#8a4b00', marginTop: 2 },
+  offlineBtn: { backgroundColor: '#1b3a2a', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
+  offlineBtnOn: { backgroundColor: '#2e7d4f' },
+  offlineBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+  thumbMissing: { alignItems: 'center', justifyContent: 'center' },
+  thumbPending: { borderWidth: 2, borderColor: '#5d6f64', borderStyle: 'dashed' },
+  guess: { gap: 6, padding: 12, borderRadius: 12, backgroundColor: '#eef4ef' },
+  guessTitle: { fontSize: 20, fontWeight: '800', color: '#1b3a2a' },
+  compareThumb: { width: 96, height: 72, borderRadius: 8, backgroundColor: '#dfe7e1' },
+  compareRef: { borderWidth: 2, borderColor: '#2e7d4f' },
   card: { backgroundColor: '#fff', marginHorizontal: 16, marginTop: 12, padding: 16, borderRadius: 14, gap: 10 },
   pickCard: { borderWidth: 2, borderColor: '#1565c0' },
   cardTitle: { fontSize: 18, fontWeight: '700', color: '#1b3a2a' },

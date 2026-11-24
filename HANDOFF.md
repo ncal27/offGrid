@@ -42,10 +42,23 @@ see `AGENTS.md`.
 3. Open one: it downloads and draws the route.
 4. Tap the trail to report a hazard, then press **Demo: simulate another
    hiker** a few times and watch confidence climb (very low, low, medium).
-5. Flip **Simulate no internet**. Go back: only downloaded trails are listed.
-   Open one: it still works. Report a hazard and tap "Not there"; the banner
-   counts changes waiting to sync.
-6. Flip it back: "synced N changes", and the hazards update.
+5. Open **Blue Hills** while online: it downloads the trail and saves its
+   reference photos on the device ("Downloaded with 12 photos").
+6. Press **Go offline** (top). The banner shows "Internet requests blocked:
+   N · sent: 0". For the strongest proof on a phone, also switch on airplane
+   mode. Only downloaded trails are listed; the map and photos still work.
+7. **Where am I?** Take or choose a photo of a landmark: the app answers
+   "Probably Eliot Tower, 9x% (high)" with the closest reference photo next
+   to yours. If it's unsure it asks for another photo. Share it as a reference
+   photo: it waits on the device ("waiting to upload").
+8. Report a hazard and tap "Not there" too; the banner counts what's waiting.
+9. Press **Back online**: "synced N changes", and everything uploads.
+
+How good is "Where am I?" Tested by hiding each real Blue Hills photo and
+asking the app to place it from the others: 10 of 11 right (the miss was
+"observation tower" vs Eliot Tower, the same tower). It works best on
+distinctive landmarks (towers, signs, views); a generic patch of woods will
+come back as low confidence, which is the honest answer.
 
 Tips: test the trail names you expect beforehand (OpenStreetMap names vary,
 e.g. "Brook Path" vs "Fuller Brook Path"). If a name isn't found, try a
@@ -156,6 +169,15 @@ Pick one, put your name on it in the team chat, branch, and open a PR.
 8. **Deploy the API** to Render's free tier for the demo.
 
 ## Known issues and limits
+
+- "Where am I?" uses a simple built-in image fingerprint, not a trained AI
+  model (none can run offline in Expo Go). It's swappable via
+  `EmbeddingAdapter`; a real model (e.g. MobileNet) needs a custom app build.
+- Photos shared from "Where am I?" become references only after the usual
+  review (2 hikers at the same place, or a reviewer). The server doesn't yet
+  record the match confidence with the photo.
+- Downloads, saved photos and the offline queue live in memory: closing the
+  app loses them (real on-device storage is still a next task).
 
 - Blue Hills photos: Wikimedia Commons only had dated **summer and fall**
   photos for these places, so spring and winter show "no photos yet". Add

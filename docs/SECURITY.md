@@ -74,6 +74,12 @@ moderation, duplicate and near-duplicate detection.
   licences (CC0, CC BY, CC BY-SA, public domain), only images on Wikimedia's
   own hosts, and validates titles/credits as safe text. Photos are linked, not
   copied, and the credit (photographer, licence, source page) is always shown.
+- `GET /photos/:id.jpg` serves only PROMOTED hiker photos (already sanitized
+  and re-encoded); pending contributions are never served, and the file name
+  is validated before lookup.
+- The app's "Go offline" mode blocks every `fetch` at one choke point while
+  offline (and counts attempts), so nothing is sent until the user goes back
+  online. Photos saved for offline use are kept as images inside the app.
 - CORS (browser version of the app only): explicit origin allow-list
   (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never `*`.
 - Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are

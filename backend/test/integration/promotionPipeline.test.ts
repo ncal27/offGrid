@@ -1,4 +1,5 @@
 import request from 'supertest';
+import sharp from 'sharp';
 import { createApp } from '../../src/app';
 import { makeImageBase64 } from '../helpers/images';
 import { SHADOW_CREEK_TRAIL_ID } from '../../src/data/fixtures';
@@ -114,5 +115,33 @@ describe('Use case: crowdsourced photos get promoted into the official dataset',
 
     const rejectRes = await request(app).post('/contributions/not-a-real-id/reject').set(auth);
     expect(rejectRes.status).toBe(404);
+  });
+
+  it('serves a promoted hiker photo so phones can download it as a new reference photo', async () => {
+    await contribute('hiker-1', { id: 'ref-a' });
+    const second = await contribute('hiker-2', { id: 'ref-b' });
+    expect(second.body.status).toBe('promoted');
+
+    const pkg = (await request(app).post(`/trails/${SHADOW_CREEK_TRAIL_ID}/package`)).body;
+    const promoted = pkg.landmarkPhotos.find((p: { source: string }) => p.source === 'contributed');
+    expect(promoted.uri).toBe('/photos/promoted-ref-b.jpg');
+    expect(['spring', 'summer', 'fall', 'winter']).toContain(promoted.season);
+    expect(promoted.attribution.author).toBe('An OffGrid hiker');
+
+    const img = await request(app).get(promoted.uri).buffer(true).parse((res, cb) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(img.status).toBe(200);
+    expect(img.headers['content-type']).toBe('image/jpeg');
+    expect((await sharp(img.body as Buffer).metadata()).format).toBe('jpeg');
+  });
+
+  it('never serves a photo that is still pending, and refuses odd file names', async () => {
+    await contribute('hiker-1', { id: 'still-pending' });
+    expect((await request(app).get('/photos/promoted-still-pending.jpg')).status).toBe(404);
+    expect((await request(app).get('/photos/still-pending.jpg')).status).toBe(404);
+    expect((await request(app).get('/photos/..%2F..%2Fetc%2Fpasswd')).status).toBe(404);
   });
 });
