@@ -27,6 +27,13 @@ see `AGENTS.md`.
 
 ![App: online](docs/img/app-trail-screen.png) ![App: simulated no internet](docs/img/app-offline.png)
 
+- **Blue Hills (Great Blue Hill)**: a real trail network with side trails and
+  places, an interactive map (zoom, drag, tap a place), and seasonal
+  reference photos with credits. Rebuild the data with `npm run data:blue-hills`
+  (needs internet; uses OpenStreetMap and Wikimedia Commons politely).
+
+![Blue Hills map](docs/img/blue-hills-map.png) ![Seasonal photos](docs/img/blue-hills-photos.png) ![Photo credit](docs/img/blue-hills-photo-credit.png)
+
 ## Class demo run-sheet (Dec 9)
 
 1. Start everything (`npm run preview`, or Expo Go on phones) **with internet**.
@@ -149,6 +156,16 @@ Pick one, put your name on it in the team chat, branch, and open a PR.
 8. **Deploy the API** to Render's free tier for the demo.
 
 ## Known issues and limits
+
+- Blue Hills photos: Wikimedia Commons only had dated **summer and fall**
+  photos for these places, so spring and winter show "no photos yet". Add
+  more by contributing photos, or by curating others into the data.
+  Some photos are more "trailhead life" (an otter at the museum) than
+  landmark views; curate in `backend/scripts/buildBlueHills.ts`.
+- Photos load from Wikimedia, so with no real signal they only show if
+  already loaded. Next step: download thumbnails into the trip package.
+- The Skyline Trail is several disconnected pieces in OpenStreetMap; the
+  longest one is drawn as the main route and the rest as side trails.
 
 - The hiker ID changes each time the app starts (sign-in is task 4).
 - Hazards are placed where you tap the trail, not from the phone's GPS yet (task 2).

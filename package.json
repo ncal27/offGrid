@@ -19,7 +19,8 @@
     "release:snapshot": "node scripts/changes.mjs snapshot",
     "demo": "node scripts/demo.mjs",
     "test:scripts": "node --test scripts/changes.test.mjs",
-    "preview": "node scripts/preview.mjs"
+    "preview": "node scripts/preview.mjs",
+    "data:blue-hills": "cd backend && npx ts-node scripts/buildBlueHills.ts"
   },
   "license": "UNLICENSED",
   "engines": {

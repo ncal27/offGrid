@@ -70,6 +70,10 @@ moderation, duplicate and near-duplicate detection.
   coordinates must be valid and inside the search area, names must pass
   `isSafeText`, sizes are capped, imports are rate limited with the other
   writes, and at most 50 imported trails are kept.
+- Reference photos (Wikimedia Commons): the data builder accepts only free
+  licences (CC0, CC BY, CC BY-SA, public domain), only images on Wikimedia's
+  own hosts, and validates titles/credits as safe text. Photos are linked, not
+  copied, and the credit (photographer, licence, source page) is always shown.
 - CORS (browser version of the app only): explicit origin allow-list
   (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never `*`.
 - Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are

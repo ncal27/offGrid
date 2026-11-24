@@ -1,7 +1,7 @@
 import { GpsFix, TripPackage } from '@offgrid/shared';
 import { OfflineNavigator, PackageStore, TripPlannerClient } from '../../src/core';
 import { FakeNetworkAdapter, InMemoryStorageAdapter } from '../../src/testUtils/mockAdapters';
-import { TEST_TRAIL_ID, testTripPackage } from '../../src/testUtils/fixtures';
+import { TEST_TRAIL_ID, testTrail, testTripPackage } from '../../src/testUtils/fixtures';
 
 const fix = (lat: number, lng: number, accuracyMeters = 8): GpsFix => ({
   location: { lat, lng },
@@ -72,5 +72,16 @@ describe('Use case: plan + download online, then navigate fully offline', () => 
     const packageStore = new PackageStore(storage);
     expect(await packageStore.has(TEST_TRAIL_ID)).toBe(false);
     expect(await packageStore.load(TEST_TRAIL_ID)).toBeNull();
+  });
+
+  it('counts a hiker on a side trail (a fork) as on trail, not off route', () => {
+    // A side trail heading north from the first waypoint, well away from the main route.
+    const branchy = {
+      ...testTrail,
+      branches: [{ id: 'spur', name: 'Overlook Spur', line: [testTrail.waypoints[0].location, { lat: 37.8695, lng: -119.5362 }] }],
+    };
+    const fix = { location: { lat: 37.8685, lng: -119.5362 }, accuracyMeters: 5, timestamp: new Date().toISOString() };
+    expect(new OfflineNavigator(testTrail).processFix(fix)[0].type).toBe('off_route');
+    expect(new OfflineNavigator(branchy).processFix(fix)[0].type).toBe('on_route');
   });
 });

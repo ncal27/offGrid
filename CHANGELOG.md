@@ -27,6 +27,10 @@ differs from the last release.
 ## [Unreleased]
 
 ### Added
+- Blue Hills (Great Blue Hill & Skyline Trail), a real trail network with 16 side trails and 7 places (Trailside Museum trailhead, summit, Eliot Tower, Little Blue/Wolcott/Hemenway Hills, Breakneck Ledge), built from OpenStreetMap by `npm run data:blue-hills`. (Team, Claude Code, 2026-11-24)
+- Seasonal reference photos: 12 free-licensed Wikimedia Commons photos tied to places, with season from the capture date and the photographer/licence/link kept and shown. Only free licences and Wikimedia's own image hosts are accepted. (Team, Claude Code, 2026-11-24)
+- Interactive map: zoom (+/−/Fit), drag to pan, tap a place to zoom in and see its photos, side trails drawn dashed and tappable for hazards. Photo gallery filters by season (current season marked) and place; tap a photo for full size with credit. (Team, Claude Code, 2026-11-24)
+- Trails can have side trails (`Trail.branches`); places have a `kind`; photos have `season`, `thumbnailUrl`, `title`, `attribution`. The offline navigator counts side trails as on-trail. (Team, Claude Code, 2026-11-24)
 - Add trails live from OpenStreetMap: type a trail name in the app ("Add a trail"); the API (`POST /trails/import`) searches the Wellesley/MetroWest area, stitches the trail's pieces into one route and adds trailhead/midway/end waypoints. Search text is restricted and escaped before it reaches OpenStreetMap; OSM data is validated; imports are rate limited and capped at 50. (Team, Claude Code, 2026-11-24)
 - Tap the trail map to drop a hazard anywhere on the trail (snaps to the nearest point on the route), with severity and type pickers. (Team, Claude Code, 2026-11-24)
 - "Simulate no internet" switch: the app makes no network calls; downloaded trails still open; reports and "Not there" answers are saved on the device (dashed on the map) and sync when you switch back online. (Team, Claude Code, 2026-11-24)

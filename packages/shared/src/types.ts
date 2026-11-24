@@ -13,6 +13,8 @@ export interface ElevationPoint extends LatLng {
   elevationMeters: number;
 }
 
+export type WaypointKind = 'trailhead' | 'summit' | 'viewpoint' | 'landmark' | 'junction' | 'point';
+
 export interface Waypoint {
   id: string;
   trailId: string;
@@ -20,6 +22,27 @@ export interface Waypoint {
   distanceFromStartMeters: number;
   name: string;
   description?: string;
+  /** What kind of place this is, so the app can show a fitting icon. */
+  kind?: WaypointKind;
+}
+
+/** A side trail / fork connecting to the main route (e.g. the paths around Great Blue Hill). */
+export interface TrailBranch {
+  id: string;
+  name: string;
+  line: LatLng[];
+}
+
+export const SEASONS = ['spring', 'summer', 'fall', 'winter'] as const;
+export type Season = (typeof SEASONS)[number];
+
+/** Credit for a photo we didn't take (e.g. Wikimedia Commons). Must be shown wherever the photo is. */
+export interface PhotoAttribution {
+  author: string;
+  license: string;
+  licenseUrl?: string;
+  /** Page the photo came from (e.g. its Wikimedia Commons file page). */
+  sourceUrl: string;
 }
 
 /** Where a landmark photo came from. */
@@ -49,6 +72,12 @@ export interface LandmarkPhoto {
    */
   embedding?: number[];
   contributorId?: string;
+  /** Season the photo was taken in (from its capture date), for the season filter. */
+  season?: Season;
+  /** Smaller version of the image for lists. */
+  thumbnailUrl?: string;
+  title?: string;
+  attribution?: PhotoAttribution;
 }
 
 export type TrailDataSource = 'usgs_usfs_nps' | 'openstreetmap' | 'hybrid';
@@ -64,8 +93,10 @@ export interface TrailSummary {
 }
 
 export interface Trail extends TrailSummary {
-  /** Ordered polyline describing the trail. */
+  /** Ordered polyline describing the main route. */
   routeLine: LatLng[];
+  /** Side trails and forks off the main route. Hikers on these are still "on trail". */
+  branches?: TrailBranch[];
   waypoints: Waypoint[];
   elevationProfile: ElevationPoint[];
   /** Increments whenever the official trail data changes, so devices can tell a downloaded package is stale. */

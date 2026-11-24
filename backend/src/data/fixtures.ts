@@ -1,4 +1,9 @@
 import { Trail, LandmarkPhoto } from '@offgrid/shared';
+// Real trail network + seasonal reference photos, generated from OpenStreetMap
+// and Wikimedia Commons by `npm run data:blue-hills` (see backend/scripts/buildBlueHills.ts).
+import blueHills from './blueHills.json';
+
+export const BLUE_HILLS_TRAIL_ID = (blueHills.trail as Trail).id;
 
 /**
  * Seed data standing in for a real official-source ingestion pipeline (USGS /
@@ -71,8 +76,10 @@ export const trailsById: Record<string, Trail> = {
       { lat: 37.8688, lng: -119.5311, elevationMeters: 2340 },
     ],
   },
+  [BLUE_HILLS_TRAIL_ID]: blueHills.trail as Trail,
 };
 
 export const photosByTrailId: Record<string, LandmarkPhoto[]> = {
+  [BLUE_HILLS_TRAIL_ID]: blueHills.photos as LandmarkPhoto[],
   [SHADOW_CREEK_TRAIL_ID]: officialPhotos,
 };

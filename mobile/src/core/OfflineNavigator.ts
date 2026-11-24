@@ -49,7 +49,12 @@ export class OfflineNavigator {
 
   processFix(fix: GpsFix): NavigationEvent[] {
     const events: NavigationEvent[] = [];
-    const { distanceMeters } = distanceToPolylineMeters(fix.location, this.trail.routeLine);
+    // On trail = close to the main route OR any side trail (forks like the
+    // paths around Great Blue Hill), so taking a fork isn't "off route".
+    const distanceMeters = Math.min(
+      distanceToPolylineMeters(fix.location, this.trail.routeLine).distanceMeters,
+      ...(this.trail.branches ?? []).map((b) => distanceToPolylineMeters(fix.location, b.line).distanceMeters),
+    );
 
     let nearestWaypointId: string | undefined;
     let nearestWaypointDistance = Infinity;
