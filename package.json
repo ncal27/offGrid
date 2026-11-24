@@ -16,7 +16,8 @@
     "check": "npm run typecheck && npm test",
     "dev:backend": "npm run dev --workspace backend",
     "changes": "node scripts/changes.mjs diff",
-    "release:snapshot": "node scripts/changes.mjs snapshot"
+    "release:snapshot": "node scripts/changes.mjs snapshot",
+    "demo": "node scripts/demo.mjs"
   },
   "license": "UNLICENSED",
   "engines": {
