@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { isSafeId } from '@offgrid/shared';
-import { getTrailById, getTrailVersion, searchTrails } from '../services/trailService';
+import { addImportedTrail, getTrailById, getTrailVersion, searchTrails } from '../services/trailService';
+import { importTrailByName } from '../services/osmImportService';
 import { buildTripPackage } from '../services/packageService';
 
 export const trailsRouter = Router();
@@ -32,6 +33,35 @@ trailsRouter.get('/search', (req, res) => {
     typeof region === 'string' ? region : undefined,
   );
   res.json(results);
+});
+
+/**
+ * Live import from OpenStreetMap by trail name (class demo: "shout out a
+ * trail"). Rate limited with the other write endpoints in app.ts.
+ */
+trailsRouter.post('/import', async (req, res, next) => {
+  try {
+    const result = await importTrailByName(req.body?.query);
+    if (!result.ok) {
+      const map = {
+        invalid_query: [400, 'invalid_trail_query'],
+        not_found: [404, 'trail_not_found_in_openstreetmap'],
+        upstream_error: [502, 'openstreetmap_unavailable'],
+      } as const;
+      const [status, error] = map[result.reason];
+      res.status(status).json({ error });
+      return;
+    }
+    const added = addImportedTrail(result.trail);
+    if (!added.ok) {
+      res.status(507).json({ error: 'too_many_imported_trails' });
+      return;
+    }
+    const { id, name, region, distanceMeters, elevationGainMeters, dataSource } = added.trail;
+    res.status(added.existed ? 200 : 201).json({ id, name, region, distanceMeters, elevationGainMeters, dataSource });
+  } catch (err) {
+    next(err);
+  }
 });
 
 /**

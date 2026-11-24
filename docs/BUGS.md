@@ -25,6 +25,7 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 | BUG-017 | `hazardReporting.test.ts` ("ships an expiresAt that matches when it actually stops being shared"), shown to fail with the bug reintroduced |
 | BUG-018 | `scripts/changes.test.mjs` ("ignores build caches like app/.expo"), shown to fail with the bug reintroduced |
 | BUG-019 | `scripts/changes.test.mjs` ("reports nothing changed right after a release snapshot"), shown to fail with the bug reintroduced |
+| BUG-020 | `hazardReporting.test.ts` ("keeps the reported severity when the reporter later says not there"), shown to fail with the bug reintroduced |
 
 ## Review log
 
@@ -40,6 +41,20 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 _None currently._
 
 ## Fixed
+
+### BUG-020 — a hazard's severity was silently downgraded to "minor"
+
+- **Severity:** Medium (a "severe" washout shown to hikers as "minor").
+- **Where:** `incidentSeverity()` in `backend/src/services/hazardService.ts`.
+- **What happened:** Severity was tallied from each hiker's *current* vote.
+  Each hiker has one vote per hazard, so when the original reporter later
+  tapped "Not there", their report (the only one carrying a severity) was
+  replaced, the tally was empty, and the fallback picked the first option in
+  the list: "minor".
+- **Fix:** Each reporter's severity claim is stored separately and survives a
+  later "not there" (which means "it's gone now", not "it was never severe").
+- **How it was caught:** A browser run-through of the new tap-to-report and
+  offline features showed a "severe" washout coming back as "minor" after sync.
 
 ### BUG-019 — right after cutting a release, `npm run changes` reported VERSION as changed
 

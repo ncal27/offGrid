@@ -64,6 +64,12 @@ moderation, duplicate and near-duplicate detection.
 ## Request-level protections (`backend/src/app.ts`)
 
 - Body limits: 15MB only on `/contributions/photos`, 100kb elsewhere (BUG-010).
+- Live OpenStreetMap import (`POST /trails/import`): the search text must be
+  2–60 characters from `[A-Za-z0-9 .'&-]` and is escaped before it's put in
+  the Overpass query, so it can't change the query. Results are untrusted:
+  coordinates must be valid and inside the search area, names must pass
+  `isSafeText`, sizes are capped, imports are rate limited with the other
+  writes, and at most 50 imported trails are kept.
 - CORS (browser version of the app only): explicit origin allow-list
   (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never `*`.
 - Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are

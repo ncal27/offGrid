@@ -19,7 +19,32 @@ see `AGENTS.md`.
   report a hazard, "Not there", and a **"Demo: simulate another hiker"**
   button. Tested in a browser against the real API.
 
-![App screenshot](docs/img/app-trail-screen.png)
+- **Add trails live from OpenStreetMap**: type a trail name ("Rocky Ledges")
+  and it's pulled in, stitched into a route, and ready to download.
+- **Tap the map to drop a hazard** anywhere on the trail.
+- **"Simulate no internet"**: no network calls at all; downloaded trails still
+  work; reports are saved on the device and sync when you switch back.
+
+![App: online](docs/img/app-trail-screen.png) ![App: simulated no internet](docs/img/app-offline.png)
+
+## Class demo run-sheet (Dec 9)
+
+1. Start everything (`npm run preview`, or Expo Go on phones) **with internet**.
+2. Ask the class for trails they like around Wellesley. Type each into
+   **Add a trail**. Each appears in the list with its distance.
+3. Open one: it downloads and draws the route.
+4. Tap the trail to report a hazard, then press **Demo: simulate another
+   hiker** a few times and watch confidence climb (very low, low, medium).
+5. Flip **Simulate no internet**. Go back: only downloaded trails are listed.
+   Open one: it still works. Report a hazard and tap "Not there"; the banner
+   counts changes waiting to sync.
+6. Flip it back: "synced N changes", and the hazards update.
+
+Tips: test the trail names you expect beforehand (OpenStreetMap names vary,
+e.g. "Brook Path" vs "Fuller Brook Path"). If a name isn't found, try a
+shorter part of it. The real OpenStreetMap import has only been tested
+against sample data in the Claude session (it can't reach OpenStreetMap), so
+**try it on a laptop before the demo.**
 
 ## Run it
 
@@ -95,16 +120,13 @@ default. For any other address, set `OFFGRID_CORS_ORIGINS` on the backend.
 
 Pick one, put your name on it in the team chat, branch, and open a PR.
 
-1. **Wellesley trails from OpenStreetMap** (blocked in the Claude cloud
-   session, works from a laptop). Write `scripts/import-osm-trails.mjs`: query
-   the Overpass API (`https://overpass-api.de/api/interpreter`) for 3–5
-   named paths in Wellesley (Brook Path, Centennial Reservation, Rocky
-   Ledges/Boulder Brook, Elm Bank Riverside Trail, Sudbury Aqueduct), stitch
-   each trail's ways into one `routeLine`, add 2–4 waypoints (trailheads,
-   viewpoints, bridges), and save them as `Trail` objects the backend loads
-   alongside `backend/src/data/fixtures.ts`. Keep "© OpenStreetMap
-   contributors" visible (it already is in the app footer). Check the
-   result against the town's trail maps.
+1. **Try the live OpenStreetMap import against the real thing** on a laptop
+   (the Claude session can't reach it). Type the candidate Wellesley trails
+   (Brook Path, Centennial Reservation, Rocky Ledges, Elm Bank, Sudbury
+   Aqueduct), check the routes against the town's trail maps, and note which
+   names work. Tune `IMPORT_BBOX` or the matching in
+   `backend/src/services/osmImportService.ts` if needed. Behind a proxy, run
+   the backend with `NODE_USE_ENV_PROXY=1`.
 2. **Live GPS on the trail** (`expo-location`): show "you are here" on the
    route, feed fixes to `OfflineNavigator` (`mobile/src/core`) for on/off-route
    and "approaching hazard → Still there?" prompts. Using the shared mobile
@@ -128,9 +150,10 @@ Pick one, put your name on it in the team chat, branch, and open a PR.
 
 ## Known issues and limits
 
-- The app keeps everything in memory: the hiker ID changes each launch
-  (sign-in is task 4), and the trip isn't stored offline yet (task 3).
-- Hazard reports from the app use the first waypoint's location, not real GPS (task 2).
+- The hiker ID changes each time the app starts (sign-in is task 4).
+- Hazards are placed where you tap the trail, not from the phone's GPS yet (task 2).
+- Downloaded trails and the offline queue live in memory: closing the app loses them (task 3).
+- Imported trails have no elevation data and generated waypoints (trailhead/midway/end).
 - The app has no automated tests yet. CI typechecks it.
 - `npm audit` in `app/` shows 3 moderate advisories in Expo's build tooling
   (a `minimatch` denial-of-service issue), not in code shipped to phones.

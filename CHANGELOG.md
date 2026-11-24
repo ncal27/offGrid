@@ -27,6 +27,9 @@ differs from the last release.
 ## [Unreleased]
 
 ### Added
+- Add trails live from OpenStreetMap: type a trail name in the app ("Add a trail"); the API (`POST /trails/import`) searches the Wellesley/MetroWest area, stitches the trail's pieces into one route and adds trailhead/midway/end waypoints. Search text is restricted and escaped before it reaches OpenStreetMap; OSM data is validated; imports are rate limited and capped at 50. (Team, Claude Code, 2026-11-24)
+- Tap the trail map to drop a hazard anywhere on the trail (snaps to the nearest point on the route), with severity and type pickers. (Team, Claude Code, 2026-11-24)
+- "Simulate no internet" switch: the app makes no network calls; downloaded trails still open; reports and "Not there" answers are saved on the device (dashed on the map) and sync when you switch back online. (Team, Claude Code, 2026-11-24)
 - `npm run demo`: end-to-end walkthrough against the real API (plan, download, hazard tiers climbing with confirmations, photo upload, bad input refused). (Team, Claude Code, 2026-11-24)
 - Expo app skeleton in `app/` (SDK 58): disclaimer, trail list, trip download, drawn route with hazards coloured by confidence tier, report hazard, "Not there", and a "Demo: simulate another hiker" button. Runs in Expo Go and in a browser. (Team, Claude Code, 2026-11-24)
 - Backend CORS for the browser version of the app: explicit allow-list only (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never a wildcard. Tested. (Team, Claude Code, 2026-11-24)
@@ -37,6 +40,7 @@ differs from the last release.
 - Release tags are named `X.Y.Z` without a "v" (e.g. `1.0.0`), matching the published 1.0.0 release; docs updated. (Team, Claude Code, 2026-11-19)
 
 ### Fixed
+- BUG-020: a hazard's severity could be silently downgraded to "minor" when its reporter later said "not there". Regression test added (Ironhide). (Team, Claude Code, 2026-11-24)
 - BUG-018: `npm run changes` no longer lists Expo build caches (`.expo`, `web-build`) as changes. BUG-019: cutting a release no longer leaves `VERSION` reported as changed. Both have regression tests in `scripts/changes.test.mjs`, now part of `npm run check` and CI. (Team, Claude Code, 2026-11-24)
 
 ### Removed

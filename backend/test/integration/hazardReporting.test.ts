@@ -115,6 +115,15 @@ describe('Use case: hazards are shared with a confidence score that hikers build
       expect(hazard).toMatchObject({ severity: 'impassable', confidenceLevel: 'very_low', confirmations: 1 });
     });
 
+    it('keeps the reported severity when the reporter later says "not there" (Ironhide: BUG-020)', async () => {
+      const first = await report('hiker-1', { severity: 'severe', hazardType: 'washout' });
+      await vote(first.body.incidentId, 'hiker-2', 'still_there');
+      await vote(first.body.incidentId, 'hiker-3', 'still_there');
+      await vote(first.body.incidentId, 'hiker-1', 'not_there'); // replaces hiker-1's own report
+      const inc = listIncidentsForTrail(SHADOW_CREEK_TRAIL_ID)[0];
+      expect(inc.severity).toBe('severe'); // was silently downgraded to 'minor'
+    });
+
     it('does not let one hiker escalate a hazard others called moderate', async () => {
       await report('hiker-1', { severity: 'moderate' });
       await report('hiker-2', { severity: 'moderate' });

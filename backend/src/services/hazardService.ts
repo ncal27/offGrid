@@ -162,6 +162,13 @@ interface Incident {
   anchor?: LatLng;
   description?: string;
   createdBy: string;
+  /**
+   * Each reporter's severity claim (latest report wins), kept apart from
+   * `votes`: a reporter who later says "not there" means "it's gone now", not
+   * "it was never severe". Tallying severity from `votes` silently downgraded
+   * the hazard to 'minor' in that case (BUG-020).
+   */
+  severityReports: Map<string, { severity: HazardSeverity; weight: number }>;
   createdAt: number;
   /** One entry per voter: their latest vote wins. */
   votes: Map<string, StoredVote>;
@@ -231,9 +238,8 @@ function voteWeight(incident: Incident, vote: StoredVote, now: number): number {
 function incidentSeverity(incident: Incident): HazardSeverity {
   const order: HazardSeverity[] = ['minor', 'moderate', 'severe', 'impassable'];
   const tally = new Map<HazardSeverity, number>();
-  for (const v of incident.votes.values()) {
-    if (v.kind !== 'report' || !v.severity) continue;
-    tally.set(v.severity, (tally.get(v.severity) ?? 0) + v.proximityWeight * v.trust);
+  for (const r of incident.severityReports.values()) {
+    tally.set(r.severity, (tally.get(r.severity) ?? 0) + r.weight);
   }
   let best: HazardSeverity = 'moderate';
   let bestWeight = -1;
@@ -422,6 +428,7 @@ export function submitHazardReport(upload: HazardReportUpload, now = Date.now())
     anchor: position,
     description: upload.description,
     createdBy: upload.reporterId,
+    severityReports: new Map(),
     createdAt: Math.min(now, Date.parse(upload.reportedAt)),
     votes: new Map(),
     creatorRewarded: false,
@@ -430,7 +437,7 @@ export function submitHazardReport(upload: HazardReportUpload, now = Date.now())
 
   // A report is also an implicit "still there" from its reporter. Merging
   // means a second reporter confirms the first, like a Waze "thumbs up".
-  recordVote(incident, {
+  const reportVote: StoredVote = {
     submissionId: upload.id,
     voterId: upload.reporterId,
     kind: 'report',
@@ -438,6 +445,11 @@ export function submitHazardReport(upload: HazardReportUpload, now = Date.now())
     proximityWeight: proximityWeight(incident.anchor, upload.location, upload.gpsWeakOrMissing) ?? WEIGHT_UNVERIFIED_POSITION,
     trust: getTrust(upload.reporterId),
     severity: upload.severity,
+  };
+  recordVote(incident, reportVote);
+  incident.severityReports.set(upload.reporterId, {
+    severity: upload.severity,
+    weight: reportVote.proximityWeight * reportVote.trust,
   });
 
   const a = assess(incident, now);

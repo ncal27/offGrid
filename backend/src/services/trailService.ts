@@ -51,6 +51,21 @@ export function bumpTrailVersion(id: string): number | null {
   return updated.version;
 }
 
+/** Cap on trails added by live OpenStreetMap import, so imports can't grow memory without bound. */
+export const MAX_IMPORTED_TRAILS = 50;
+
+export type AddTrailResult = { ok: true; trail: Trail; existed: boolean } | { ok: false; reason: 'too_many_trails' };
+
+/** Adds a trail imported at runtime (osmImportService). Re-importing the same trail returns the existing copy. */
+export function addImportedTrail(trail: Trail): AddTrailResult {
+  const existing = trailsById.get(trail.id);
+  if (existing) return { ok: true, trail: existing, existed: true };
+  const imported = [...trailsById.values()].filter((t) => t.id.startsWith('osm-')).length;
+  if (imported >= MAX_IMPORTED_TRAILS) return { ok: false, reason: 'too_many_trails' };
+  trailsById.set(trail.id, trail);
+  return { ok: true, trail, existed: false };
+}
+
 /** Test-only helper to reset in-memory state between test cases. */
 export function _resetForTests(): void {
   trailsById = seedTrails();
