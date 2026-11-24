@@ -30,6 +30,7 @@ differs from the last release.
 - `npm run demo`: end-to-end walkthrough against the real API (plan, download, hazard tiers climbing with confirmations, photo upload, bad input refused). (Team, Claude Code, 2026-11-24)
 - Expo app skeleton in `app/` (SDK 58): disclaimer, trail list, trip download, drawn route with hazards coloured by confidence tier, report hazard, "Not there", and a "Demo: simulate another hiker" button. Runs in Expo Go and in a browser. (Team, Claude Code, 2026-11-24)
 - Backend CORS for the browser version of the app: explicit allow-list only (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never a wildcard. Tested. (Team, Claude Code, 2026-11-24)
+- `npm run preview`: serves the API and the web build of the app from one address (http://localhost:8080), so the app can be tried in a browser with no setup; stops after 30 minutes. Build with `npm run build:web` in `app/`. (Team, Claude Code, 2026-11-24)
 - `HANDOFF.md`: how to run everything, and the next tasks in priority order. CI now also typechecks the app. (Team, Claude Code, 2026-11-24)
 
 ### Changed

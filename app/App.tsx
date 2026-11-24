@@ -19,7 +19,10 @@ import type {
  * Not wired yet (see HANDOFF.md): live GPS, real map tiles, offline storage,
  * camera/photo matching, sign-in.
  */
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000';
+// "same-origin" = call the API at the address the app itself is served from
+// (web builds, see .env.production and `npm run preview`).
+const API_SETTING = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000';
+const API_URL = API_SETTING === 'same-origin' ? '' : API_SETTING;
 
 // Stand-in for sign-in (Supabase anonymous auth is the plan): one random ID per app launch.
 const makeId = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 10)}`;

@@ -31,6 +31,22 @@ npm run check      # typecheck + all tests
 npm run demo       # scripted end-to-end walkthrough
 ```
 
+### Quickest way to try the app: in your browser
+
+One address serves both the app and the API (no phone or Wi-Fi setup):
+
+```bash
+cd app
+npm install
+npm run build:web
+cd ..
+npm run preview
+```
+
+Open http://localhost:8080. It stops by itself after 30 minutes
+(`npm run preview -- --minutes 60` for longer). Data resets when it stops.
+Re-run `npm run build:web` after changing the app.
+
 ### The app on your phone (Expo Go)
 
 1. Install **Expo Go** from the App Store or Play Store.
