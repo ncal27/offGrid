@@ -66,6 +66,16 @@ Candidate trails. **Not locked in**: the team will look them up and pick 2–3 f
 
 Sources: [Town of Wellesley: Favorite Trail Walks](https://www.wellesleyma.gov/1724/Favorite-Trail-Walks), [MassTrails: Wellesley](https://masstrails.com/wellesley.html), [Swellesley Report: Waban Arches and Sudbury Aqueduct](https://theswellesleyreport.com/2020/01/wellesley-hikes-the-waban-arches-and-sudbury-aqueduct/).
 
+## How learning works (team decision 2026-11-24)
+
+**Nothing is trained on the phone, ever, offline or online.** On the trail,
+the phone only *compares* your photos with the reference photos it
+downloaded. Photos you choose to share wait on the phone until you have
+signal again, then upload. All accumulation happens on the server: shared
+photos go through review (2 hikers or a reviewer), approved ones become new
+reference photos for everyone's next download, and any future model
+improvement is done server-side from that pool.
+
 ## Decisions made
 
 | Date | Decision | Why |
@@ -87,6 +97,8 @@ Sources: [Town of Wellesley: Favorite Trail Walks](https://www.wellesleyma.gov/1
 | 2026-11-19 | **Blur all faces, especially children's.** If faces are a large part of the photo, reject it and ask the hiker to retake it without people. Landmark photos never need people in them | Privacy |
 | 2026-11-19 | **Ready-made photo model; no custom training** | Time and complexity |
 | 2026-11-19 | **A short disclaimer is enough** for liability (class project) | See wording below |
+| 2026-11-24 | **No on-device / offline model training.** Phones only compare photos; shared photos sync when signal returns and are accumulated server-side | Keeps phones simple and private; learning happens centrally from reviewed photos |
+| 2026-11-24 | **Warn hikers not to close the app once offline** (downloads live in memory until real storage exists) | Closing it would lose the trip |
 | 2026-11-19 | **Shared ownership**: no fixed roles; anyone can work on anything, and the lead reviews | Small team, short timeline |
 
 **Disclaimer wording (draft):** "OffGrid is a student project. Trail and

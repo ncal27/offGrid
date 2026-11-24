@@ -1,5 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
+import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
@@ -7,6 +8,7 @@ import {
   Linking,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -31,6 +33,21 @@ import type {
 } from '../packages/shared/src/types';
 // Shared, platform-agnostic offline photo matching (resolved via metro.config.js).
 import { confidenceLevel, decodeJpeg, fingerprint, rankPlaces, ReferenceEmbedding } from '../mobile/src/core/imageFingerprint';
+import { parseTripRequest } from '../mobile/src/core/tripRequest';
+
+/**
+ * Speech-to-text for "Plan by voice". In browsers that have it (Chrome, Edge,
+ * Safari) this is the built-in SpeechRecognition (it uses the browser
+ * maker's online service, which is fine: planning happens while online).
+ * On phones in Expo Go, people use the keyboard's own microphone button to
+ * dictate into the text box; native speech recognition would need a custom build.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const BrowserSpeechRecognition: any =
+  Platform.OS === 'web' && typeof window !== 'undefined'
+    ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
+    : undefined;
 
 /**
  * OffGrid app (demo build). Talks to the real backend.
@@ -736,6 +753,9 @@ export default function App() {
   const blocked = useBlockedCount();
   const [picked, setPicked] = useState<LatLng | null>(null);
   const [placeId, setPlaceId] = useState<string | null>(null);
+  const [planText, setPlanText] = useState('');
+  const [listening, setListening] = useState(false);
+  const [planReply, setPlanReply] = useState('');
   const [season, setSeason] = useState<Season | 'all'>('all');
   const [viewerPhoto, setViewerPhoto] = useState<LandmarkPhoto | null>(null);
   const [severity, setSeverity] = useState<HazardSeverity>('moderate');
@@ -818,6 +838,85 @@ export default function App() {
       }
       setOpenTrailId(trailId);
     });
+
+  /** Shows and speaks the planner's answer. */
+  const reply = (message: string) => {
+    setPlanReply(message);
+    setStatus('');
+    try {
+      Speech.stop();
+      Speech.speak(message, { language: 'en-US', rate: 1.0 });
+    } catch {
+      // No voice available: the text answer is still shown.
+    }
+  };
+
+  /** "Plan by voice": understand the request, fetch/download the trail and its photos, answer. */
+  const planTrip = () =>
+    run(async () => {
+      const text = planText.trim();
+      if (!text) return;
+      if (offline) return reply("You're offline. Planning needs signal, so go back online first.");
+      const list = trails ?? (await api<TrailSummary[]>(offline, 'GET', '/trails/search'));
+      const req = parseTripRequest(text, list);
+      let trailId = req.trailId;
+      let name = list.find((t) => t.id === trailId)?.name;
+      if (!trailId && req.searchName) {
+        setStatus(`Looking up "${req.searchName}" on OpenStreetMap…`);
+        try {
+          const t = await api<TrailSummary>(offline, 'POST', '/trails/import', { query: req.searchName });
+          trailId = t.id;
+          name = t.name;
+          setTrails(await api<TrailSummary[]>(offline, 'GET', '/trails/search'));
+        } catch {
+          return reply(`I couldn't find "${req.searchName}" on OpenStreetMap. Try the trail's exact name, or a shorter part of it.`);
+        }
+      }
+      if (!trailId) return reply("I couldn't tell which trail you mean. Try: \"Plan a hike at Blue Hills this Saturday.\"");
+
+      setStatus(`Planning ${name}: downloading the trail and photos…`);
+      const p = await fetchPackage(trailId);
+      setPicked(null);
+      setPlaceId(null);
+      setOpenTrailId(trailId);
+      const n = await saveForOffline(p);
+      if (req.season) setSeason(req.season);
+      setPlanText('');
+      reply(
+        `Your trip to ${name}${req.when ? ` for ${req.when}` : ''} is ready to use offline: the map, ` +
+          `${p.trail.waypoints.length} places and ${n} photo${n === 1 ? '' : 's'}` +
+          `${p.hazards.length ? `, plus ${p.hazards.length} reported hazard${p.hazards.length === 1 ? '' : 's'}` : ''}.` +
+          `${req.season ? ` Showing ${req.season} photos.` : ''}` +
+          ' Once you lose signal, keep OffGrid open. Closing it erases the download.',
+      );
+    });
+
+  const listen = () => {
+    if (!BrowserSpeechRecognition) return;
+    const r = new BrowserSpeechRecognition();
+    r.lang = 'en-US';
+    r.interimResults = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    r.onresult = (e: any) => setPlanText(Array.from(e.results).map((x: any) => x[0].transcript).join(' '));
+    r.onend = () => setListening(false);
+    r.onerror = () => setListening(false);
+    setListening(true);
+    r.start();
+  };
+
+  // In a browser, closing the tab would erase downloads and unsent changes: ask first.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (Object.keys(packages).length === 0 && queue.length === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Some browsers only show the prompt when this is a non-empty string.
+      e.returnValue = 'Closing OffGrid erases your downloaded trails and unsent changes.';
+      return e.returnValue;
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [packages, queue]);
 
   const importTrail = () =>
     run(async () => {
@@ -998,11 +1097,55 @@ export default function App() {
           </Pressable>
         </View>
 
+        {(offline || Object.keys(packages).length > 0) && (
+          <View style={styles.keepOpen} accessibilityRole="alert">
+            <Text style={styles.keepOpenTitle}>Keep OffGrid open</Text>
+            <Text style={styles.keepOpenText}>
+              Switching to other apps is fine, but closing OffGrid erases your downloaded trails, saved photos and anything
+              waiting to sync. Don't close it until you're back in signal.
+            </Text>
+          </View>
+        )}
+
         {!!error && <Text style={styles.error}>{error}</Text>}
         {!!status && <Text style={styles.status}>{status}</Text>}
 
+        {!!planReply && (
+          <View style={styles.replyBox}>
+            <Text style={styles.body}>{planReply}</Text>
+            <View style={styles.row}>
+              <Button title="Read aloud again" kind="secondary" onPress={() => reply(planReply)} />
+              <Button title="Dismiss" kind="secondary" onPress={() => setPlanReply('')} />
+            </View>
+          </View>
+        )}
+
         {!pkg && (
           <>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Plan a trip</Text>
+              <Text style={styles.meta}>
+                Say or type where and when, e.g. "I'm hiking Blue Hills this Saturday, plan a trip for me."
+                {BrowserSpeechRecognition ? '' : " On a phone, tap the box and use your keyboard's microphone to speak."}
+              </Text>
+              <TextInput
+                accessibilityLabel="Trip request"
+                value={planText}
+                onChangeText={setPlanText}
+                placeholder="Where and when are you hiking?"
+                multiline
+                maxLength={300}
+                style={[styles.input, { minHeight: 64 }]}
+                editable={!offline}
+              />
+              <View style={styles.row}>
+                {BrowserSpeechRecognition && (
+                  <Button title={listening ? 'Listening…' : '🎤 Speak'} kind="secondary" onPress={listen} disabled={offline || listening} />
+                )}
+                <Button title="Plan it" onPress={planTrip} disabled={offline || busy || planText.trim().length < 3} />
+              </View>
+            </View>
+
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Add a trail</Text>
               <Text style={styles.meta}>Any named trail around Wellesley/MetroWest, from OpenStreetMap.</Text>
@@ -1183,6 +1326,10 @@ const styles = StyleSheet.create({
   netBarOffline: { backgroundColor: '#fdecc8' },
   netTitle: { fontSize: 15, fontWeight: '700', color: '#1b3a2a' },
   proof: { fontSize: 13, fontWeight: '700', color: '#8a4b00', marginTop: 2 },
+  keepOpen: { marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: '#fde3e1', borderWidth: 1, borderColor: '#e0a19b' },
+  keepOpenTitle: { fontSize: 15, fontWeight: '800', color: '#8c1d18' },
+  keepOpenText: { fontSize: 13, color: '#5c1a16', marginTop: 2 },
+  replyBox: { marginHorizontal: 16, marginTop: 12, padding: 14, borderRadius: 14, backgroundColor: '#e3f0e6', borderWidth: 1, borderColor: '#9cc8a8', gap: 8 },
   offlineBtn: { backgroundColor: '#1b3a2a', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
   offlineBtnOn: { backgroundColor: '#2e7d4f' },
   offlineBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },

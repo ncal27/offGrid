@@ -27,6 +27,8 @@ differs from the last release.
 ## [Unreleased]
 
 ### Added
+- "Plan a trip" by voice or text: e.g. "I'm hiking Blue Hills this Saturday, plan a trip for me". The app finds the trail (or fetches it from OpenStreetMap), downloads it with its photos, switches the photo filter to that date's season, and answers out loud (expo-speech). Browser mic via built-in speech recognition; on phones, the keyboard's dictation. Parser in `mobile/src/core/tripRequest.ts` with tests. (Team, Claude Code, 2026-11-24)
+- "Keep OffGrid open" warning once a trail is downloaded or you're offline (closing the app erases downloads and unsent changes), and a leave-page prompt in browsers. (Team, Claude Code, 2026-11-24)
 - "Go offline" button at the top: every network request the app attempts while offline is blocked and counted, with an on-screen "Internet requests blocked: N · sent: 0" as proof for the demo. (Team, Claude Code, 2026-11-24)
 - Reference photos are saved on the device when a trail is downloaded, so the photo gallery and viewer work offline. (Team, Claude Code, 2026-11-24)
 - "Where am I?": take or choose a photo and the app compares it with the saved reference photos, fully offline, giving a best-guess place and a confidence; low confidence asks for another photo; several photos are combined. Uses a built-in image fingerprint (colour, layout, edges), a stand-in for a trained model. Leave-one-out on the real Blue Hills photos: 10 of 11 placed correctly. (Team, Claude Code, 2026-11-24)

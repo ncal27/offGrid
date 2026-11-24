@@ -80,6 +80,10 @@ moderation, duplicate and near-duplicate detection.
 - The app's "Go offline" mode blocks every `fetch` at one choke point while
   offline (and counts attempts), so nothing is sent until the user goes back
   online. Photos saved for offline use are kept as images inside the app.
+- Voice planning: in browsers, the 🎤 button uses the browser's own speech
+  recognition, which sends audio to the browser maker's service (e.g. Google
+  for Chrome); it's only available while online. On phones, dictation is the
+  keyboard's own feature. The app itself never records or uploads audio.
 - CORS (browser version of the app only): explicit origin allow-list
   (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never `*`.
 - Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are

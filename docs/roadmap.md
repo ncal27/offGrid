@@ -58,15 +58,12 @@
    step that turns the tested core logic into an app someone can actually
    open on a phone.
 
-2. **Real on-device VPR model.** Replace the fake `EmbeddingAdapter` with an
-   exported TFLite/Core ML/ONNX model. Start from the HOGNet / MSGC-NetVLAD
-   family for on-device efficiency (see `docs/architecture.md`); since each
-   trail's reference set is small, this likely needs less capacity than
-   general VPR benchmarks assume, so it may be worth training a small custom
-   embedding model specifically for this closed-set, per-trail matching
-   problem rather than adopting a published model unmodified. Note this now
-   also blocks promoted contributed photos from being matchable at all —
-   see `promoteToLandmarkPhoto()` in `contributionService.ts`.
+2. **Real on-device VPR model.** Replace the built-in image fingerprint
+   (`mobile/src/core/imageFingerprint.ts`, behind `EmbeddingAdapter`) with a
+   ready-made, pretrained model exported to TFLite/Core ML/ONNX (team
+   decision: no custom training). The phone only *runs* the model to compare
+   photos; it never trains it (see "How learning works" in `ROADMAP.md`).
+   Needs a custom app build (not Expo Go).
 
 3. **Real trail/map data ingestion.** Replace the fixture trail with an
    actual pipeline pulling OpenStreetMap (via Overpass) for international

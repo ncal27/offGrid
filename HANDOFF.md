@@ -42,8 +42,12 @@ see `AGENTS.md`.
 3. Open one: it downloads and draws the route.
 4. Tap the trail to report a hazard, then press **Demo: simulate another
    hiker** a few times and watch confidence climb (very low, low, medium).
-5. Open **Blue Hills** while online: it downloads the trail and saves its
-   reference photos on the device ("Downloaded with 12 photos").
+5. **Plan by voice:** tap 🎤 Speak (browser) or the keyboard's mic (phone)
+   and say "I'm about to hike Blue Hills this Saturday, can you plan a trip
+   for me?". The app downloads the trail and its photos, switches to that
+   season's photos, and says it's ready to use offline. (Or just open
+   **Blue Hills**: it downloads the trail and saves its photos either way.)
+   Point out the red **Keep OffGrid open** banner.
 6. Press **Go offline** (top). The banner shows "Internet requests blocked:
    N · sent: 0". For the strongest proof on a phone, also switch on airplane
    mode. Only downloaded trails are listed; the map and photos still work.
@@ -169,6 +173,14 @@ Pick one, put your name on it in the team chat, branch, and open a PR.
 8. **Deploy the API** to Render's free tier for the demo.
 
 ## Known issues and limits
+
+- Voice planning understands simple requests (a trail name plus today,
+  tomorrow, a weekday, "this weekend", "next week" or a month). It's keyword
+  rules, not an AI assistant. The browser mic needs Chrome, Edge or Safari;
+  on phones use keyboard dictation.
+- The leave-page prompt is a browser feature: browsers only show it after
+  you've interacted with the page, and phones can't block closing an app,
+  which is why the banner exists.
 
 - "Where am I?" uses a simple built-in image fingerprint, not a trained AI
   model (none can run offline in Expo Go). It's swappable via
