@@ -1,4 +1,4 @@
-import { ApiError, describeFailure, installNetworkGuard, joinDictation, OfflineError } from '../../src/core';
+import { ApiError, describeFailure, installNetworkGuard, joinDictation, OfflineError, readinessFor } from '../../src/core';
 
 /**
  * Use case: the app's small behaviours behave: dictation adds to what you've
@@ -61,5 +61,50 @@ describe('Use case: failures say what actually went wrong (Ironhide: BUG-025)', 
     expect(describeFailure(new OfflineError())).toMatch(/Go offline button is on/);
     const messages = [osm, describeFailure(new TypeError('x')), describeFailure(new ApiError(429, 'rate_limited')), describeFailure(new OfflineError())];
     expect(new Set(messages).size).toBe(4);
+  });
+});
+
+describe('Use case: "you\'re ready to hike" only when everything is really on the phone', () => {
+  const base = {
+    trailName: 'Blue Hills',
+    places: 7,
+    sideTrails: 16,
+    photosSaved: 12,
+    photosTotal: 12,
+    matchablePlaces: 3,
+    hazards: 0,
+    checkedAt: new Date(2026, 10, 25, 14, 41),
+  };
+
+  it('says ready, lists what was saved, and reminds them to keep the app open', () => {
+    const r = readinessFor(base);
+    expect(r.ready).toBe(true);
+    expect(r.headline).toBe("You're ready to hike Blue Hills");
+    expect(r.items.map((i) => i.text)).toEqual([
+      'Trail map, 16 side trails and 7 places',
+      '12 of 12 reference photos saved on this device',
+      '"Where am I?" can match photos from 3 places',
+      expect.stringMatching(/^Hazard reports as of .*2:41.* \(none reported\)$/),
+    ]);
+    expect(r.advice).toMatch(/Keep OffGrid open in the background.*don't close it/);
+  });
+
+  it("doesn't claim ready when photos failed to save, and says how to fix it", () => {
+    const r = readinessFor({ ...base, photosSaved: 10 });
+    expect(r.ready).toBe(false);
+    expect(r.headline).toBe("Almost ready: 2 photos didn't save");
+    expect(r.items[1]).toEqual({ ok: false, text: '10 of 12 reference photos saved on this device' });
+    expect(r.advice).toMatch(/Open the trail again while you still have signal/);
+  });
+
+  it('is honest about trails with no photos', () => {
+    const r = readinessFor({ ...base, photosSaved: 0, photosTotal: 0, matchablePlaces: 0, sideTrails: 0, places: 3, hazards: 1 });
+    expect(r.ready).toBe(true);
+    expect(r.items.map((i) => i.text)).toEqual([
+      'Trail map and 3 places',
+      'No reference photos for this trail yet',
+      expect.stringMatching(/needs reference photos/),
+      expect.stringMatching(/\(1 reported hazard\)/),
+    ]);
   });
 });

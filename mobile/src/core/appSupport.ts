@@ -119,3 +119,66 @@ export function describeFailure(err: unknown): string {
   }
   return "I can't reach the OffGrid server. Is it still running (npm run preview or npm run dev:backend)?";
 }
+
+export interface DownloadReport {
+  trailName: string;
+  places: number;
+  sideTrails: number;
+  photosSaved: number;
+  photosTotal: number;
+  /** Places with at least one fingerprinted reference photo ("Where am I?" can match these). */
+  matchablePlaces: number;
+  hazards: number;
+  /** When the hazard reports were fetched. */
+  checkedAt: Date;
+}
+
+export interface Readiness {
+  ready: boolean;
+  headline: string;
+  items: { ok: boolean; text: string }[];
+  advice: string;
+}
+
+/**
+ * The "Ready to hike" checklist shown after a download. Only says ready when
+ * it's true: if photos failed to save, it says what's missing and to retry
+ * while there's still signal.
+ */
+export function readinessFor(r: DownloadReport): Readiness {
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const time = r.checkedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const photosOk = r.photosSaved === r.photosTotal;
+  const items = [
+    {
+      ok: true,
+      text: `Trail map${r.sideTrails ? `, ${plural(r.sideTrails, 'side trail')}` : ''} and ${plural(r.places, 'place')}`,
+    },
+    {
+      ok: photosOk,
+      text:
+        r.photosTotal === 0
+          ? 'No reference photos for this trail yet'
+          : `${r.photosSaved} of ${r.photosTotal} reference photos saved on this device`,
+    },
+    {
+      ok: r.matchablePlaces > 0 || r.photosTotal === 0,
+      text:
+        r.matchablePlaces > 0
+          ? `"Where am I?" can match photos from ${plural(r.matchablePlaces, 'place')}`
+          : '"Where am I?" needs reference photos, so it won\'t work on this trail',
+    },
+    { ok: true, text: `Hazard reports as of ${time} (${r.hazards ? plural(r.hazards, 'reported hazard') : 'none reported'})` },
+  ];
+  const ready = photosOk;
+  return {
+    ready,
+    headline: ready
+      ? `You're ready to hike ${r.trailName}`
+      : `Almost ready: ${r.photosTotal - r.photosSaved} photo${r.photosTotal - r.photosSaved === 1 ? '' : 's'} didn't save`,
+    items,
+    advice: ready
+      ? "If you lose signal out there, that's fine. Keep OffGrid open in the background (switching apps is OK), but don't close it, or the download is erased."
+      : 'Open the trail again while you still have signal to retry the missing photos. Everything else is saved. Once you lose signal, keep OffGrid open (don\'t close it).',
+  };
+}

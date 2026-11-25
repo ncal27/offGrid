@@ -35,7 +35,7 @@ import type {
 import { confidenceLevel, decodeJpeg, fingerprint, rankPlaces, ReferenceEmbedding } from '../mobile/src/core/imageFingerprint';
 import { afterSearchNotFound, IDLE, PlannerAction, PlannerState, respond, showResults } from '../mobile/src/core/tripPlannerDialog';
 import { formatMinutes, miles, SortKey } from '../mobile/src/core/trailDiscovery';
-import { ApiError, describeFailure, installNetworkGuard, joinDictation } from '../mobile/src/core/appSupport';
+import { ApiError, describeFailure, DownloadReport, installNetworkGuard, joinDictation, readinessFor } from '../mobile/src/core/appSupport';
 import type { WhenInfo } from '../mobile/src/core/tripPlannerDialog';
 
 /**
@@ -743,6 +743,8 @@ export default function App() {
   const [planText, setPlanText] = useState('');
   const [listening, setListening] = useState(false);
   const [planReply, setPlanReply] = useState('');
+  // The "Ready to hike" checklist for the most recent download (per trail).
+  const [readiness, setReadiness] = useState<{ trailId: string; report: DownloadReport; dismissed: boolean } | null>(null);
   // The planner conversation: what OffGrid last asked, and the recent back-and-forth.
   const [plannerState, setPlannerState] = useState<PlannerState>(IDLE);
   const [chat, setChat] = useState<{ who: 'you' | 'offgrid'; text: string }[]>([]);
@@ -804,7 +806,19 @@ export default function App() {
     }
     setPhotoData((prev) => ({ ...prev, ...saved }));
     setRefEmbeddings((prev) => ({ ...prev, [p.trailId]: embeddings }));
-    return Object.keys(saved).length;
+    const report: DownloadReport = {
+      trailName: p.trail.name,
+      places: p.trail.waypoints.length,
+      sideTrails: p.trail.branches?.length ?? 0,
+      photosSaved: Object.keys(saved).length,
+      photosTotal: photos.length,
+      matchablePlaces: new Set(embeddings.map((e) => e.placeId)).size,
+      hazards: p.hazards.length,
+      checkedAt: new Date(),
+    };
+    setReadiness({ trailId: p.trailId, report, dismissed: false });
+    setStatus('');
+    return report;
   };
   const photoSrc = (p: LandmarkPhoto): string | null =>
     photoData[p.id] ?? (offline ? null : assetUrl(p.thumbnailUrl ?? p.uri));
@@ -814,15 +828,9 @@ export default function App() {
       setPicked(null);
       setPlaceId(null);
       if (!offline) {
-        const firstTime = !packages[trailId];
         const p = await fetchPackage(trailId); // first download, or refresh while we have signal
         setOpenTrailId(trailId);
-        const n = await saveForOffline(p);
-        setStatus(
-          firstTime
-            ? `Downloaded with ${n} photo${n === 1 ? '' : 's'}. This trail now works with no internet.`
-            : `Up to date; ${n} photo${n === 1 ? '' : 's'} saved for offline.`,
-        );
+        await saveForOffline(p); // shows the "Ready to hike" checklist
       } else {
         setStatus('Opened from this device (no internet needed).');
       }
@@ -853,16 +861,14 @@ export default function App() {
     setPicked(null);
     setPlaceId(null);
     setOpenTrailId(trailId);
-    const n = await saveForOffline(p);
+    const report = await saveForOffline(p);
     if (when.season) setSeason(when.season);
     setPlannerState(IDLE);
     setChat([]);
     reply(
-      `Your trip to ${name}${when.when ? ` for ${when.when}` : ''} is ready to use offline: the map, ` +
-        `${p.trail.waypoints.length} places and ${n} photo${n === 1 ? '' : 's'}` +
-        `${p.hazards.length ? `, plus ${p.hazards.length} reported hazard${p.hazards.length === 1 ? '' : 's'}` : ''}.` +
-        `${when.season && n > 0 ? ` Showing ${when.season} photos.` : ''}` +
-        ' Once you lose signal, keep OffGrid open. Closing it erases the download.',
+      `Your trip to ${name}${when.when ? ` for ${when.when}` : ''} is planned and downloaded.` +
+        `${when.season && report.photosSaved > 0 ? ` Showing ${when.season} photos.` : ''}` +
+        ' Check the "Ready to hike" list below.',
     );
   };
 
@@ -1336,6 +1342,30 @@ export default function App() {
           </>
         )}
 
+        {pkg && readiness && readiness.trailId === pkg.trailId && !readiness.dismissed && (() => {
+          const r = readinessFor(readiness.report);
+          return (
+            <View style={[styles.readyCard, !r.ready && styles.readyCardWarn]} accessibilityLabel="Ready to hike checklist">
+              <Text style={styles.readyTitle}>
+                {r.ready ? '✅ ' : '⚠️ '}
+                {r.headline}
+              </Text>
+              {r.items.map((item, i) => (
+                <Text key={i} style={styles.readyItem}>
+                  {item.ok ? '✓' : '✗'} {item.text}
+                </Text>
+              ))}
+              <Text style={styles.readyAdvice}>{r.advice}</Text>
+              <View style={styles.row}>
+                {!r.ready && !offline && (
+                  <Button title="Retry missing photos" onPress={() => openTrail(pkg.trailId)} />
+                )}
+                <Button title="Got it" kind="secondary" onPress={() => setReadiness({ ...readiness, dismissed: true })} />
+              </View>
+            </View>
+          );
+        })()}
+
         {pkg && (
           <>
             <View style={styles.card}>
@@ -1475,6 +1505,11 @@ const styles = StyleSheet.create({
   netBarOffline: { backgroundColor: '#fdecc8' },
   netTitle: { fontSize: 15, fontWeight: '700', color: '#1b3a2a' },
   proof: { fontSize: 13, fontWeight: '700', color: '#8a4b00', marginTop: 2 },
+  readyCard: { marginHorizontal: 16, marginTop: 12, padding: 16, borderRadius: 14, backgroundColor: '#e3f4e8', borderWidth: 2, borderColor: '#2e7d4f', gap: 6 },
+  readyCardWarn: { backgroundColor: '#fdf3dc', borderColor: '#d99a00' },
+  readyTitle: { fontSize: 19, fontWeight: '800', color: '#1b3a2a' },
+  readyItem: { fontSize: 15, color: '#1b3a2a' },
+  readyAdvice: { fontSize: 14, color: '#2b3a31', marginTop: 4, fontWeight: '600' },
   keepOpen: { marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: '#fde3e1', borderWidth: 1, borderColor: '#e0a19b' },
   keepOpenTitle: { fontSize: 15, fontWeight: '800', color: '#8c1d18' },
   keepOpenText: { fontSize: 13, color: '#5c1a16', marginTop: 2 },

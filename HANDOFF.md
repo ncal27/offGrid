@@ -48,7 +48,10 @@ see `AGENTS.md`.
    season's photos, and replies in text that it's ready to use offline. Speaking
    twice adds to the sentence. (Or just open
    **Blue Hills**: it downloads the trail and saves its photos either way.)
-   Point out the red **Keep OffGrid open** banner.
+   A green **"You're ready to hike"** checklist appears (map, photos saved,
+   places "Where am I?" can match, hazards checked) with the reminder to keep
+   the app open in the background if signal drops. Point out the red **Keep
+   OffGrid open** banner.
    To show the follow-up questions, say something vague ("plan something
    nice for Sunday"): OffGrid asks which trail, and if it can't find it near
    Wellesley, what town and state it's in ("It's in Canton, Massachusetts").
