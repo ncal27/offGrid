@@ -27,6 +27,7 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 | BUG-019 | `scripts/changes.test.mjs` ("reports nothing changed right after a release snapshot"), shown to fail with the bug reintroduced |
 | BUG-020 | `hazardReporting.test.ts` ("keeps the reported severity when the reporter later says not there"), shown to fail with the bug reintroduced |
 | BUG-021 | `blueHills.test.ts` ("ships real thumbnails, smaller than the full photo"), shown to fail on the buggy data |
+| BUG-022 | `scripts/appBuildConfig.test.mjs` (bundler config stays narrow), shown to fail on the old config; plus CI now builds the web app |
 
 ## Review log
 
@@ -42,6 +43,25 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 _None currently._
 
 ## Fixed
+
+### BUG-022 — `npm run build:web` stopped silently on Windows ("Starting Metro Bundler", then nothing)
+
+- **Severity:** High for the demo (no web build, so `npm run preview` couldn't run).
+- **Where:** `app/metro.config.js`.
+- **What happened:** To let the app use shared code from `mobile/`, the
+  bundler config watched the whole repo-root `node_modules` and relied on
+  npm's workspace links (junctions on Windows) to reach `@offgrid/shared`
+  and `jpeg-js`. On the project lead's Windows machine, `expo export` exited
+  with no output right after "Starting Metro Bundler". A fresh clone built
+  fine on Linux, so this is Windows-specific.
+- **Fix:** Watch only `mobile/src` and `packages/shared`; map
+  `@offgrid/shared` straight to its folder; resolve every package from
+  `app/node_modules` only (the app now has its own `jpeg-js`). Verified the
+  app builds and works with the repo-root `node_modules` removed entirely.
+- **Not yet confirmed on Windows:** the exact Windows error was never shown
+  (Expo hid it). If it still fails, run it with `EXPO_DEBUG=1` (see
+  `HANDOFF.md`) and log what it prints here.
+- **How it was caught:** The project lead's first build after pulling.
 
 ### BUG-021 — Blue Hills "thumbnails" were full-size photos
 

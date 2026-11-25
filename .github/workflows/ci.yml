@@ -27,3 +27,8 @@ jobs:
         run: |
           npm ci
           npx tsc --noEmit
+      - name: Build the web app (catches bundler problems before anyone pulls)
+        working-directory: app
+        env:
+          EXPO_OFFLINE: '1'
+        run: npx expo export --platform web

@@ -102,6 +102,23 @@ Open http://localhost:8080. It stops by itself after 30 minutes
 (`npm run preview -- --minutes 60` for longer). Data resets when it stops.
 Re-run `npm run build:web` after changing the app.
 
+### If `npm run build:web` stops after "Starting Metro Bundler"
+
+It must end with **"Exported: dist"**. If it stops silently:
+
+1. Make sure the app's packages are up to date: `cd app` then `npm install`.
+2. Build again with the cache cleared and the hidden error shown:
+
+   PowerShell:
+   ```powershell
+   $env:EXPO_DEBUG="1"; npx expo export --platform web --clear
+   ```
+   Mac/Linux:
+   ```bash
+   EXPO_DEBUG=1 npx expo export --platform web --clear
+   ```
+3. If it still fails, copy what it prints into a new BUG entry in `docs/BUGS.md`.
+
 ### The app on your phone (Expo Go)
 
 1. Install **Expo Go** from the App Store or Play Store.

@@ -18,7 +18,7 @@
     "changes": "node scripts/changes.mjs diff",
     "release:snapshot": "node scripts/changes.mjs snapshot",
     "demo": "node scripts/demo.mjs",
-    "test:scripts": "node --test scripts/changes.test.mjs",
+    "test:scripts": "node --test scripts/changes.test.mjs scripts/appBuildConfig.test.mjs",
     "preview": "node scripts/preview.mjs",
     "data:blue-hills": "cd backend && npx ts-node scripts/buildBlueHills.ts"
   },

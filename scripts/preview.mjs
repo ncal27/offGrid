@@ -32,7 +32,11 @@ const API_PREFIXES = ['/trails', '/hazards', '/contributions', '/photos', '/heal
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.ico': 'image/x-icon', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' };
 
 if (!existsSync(join(DIST, 'index.html'))) {
-  console.error('No web build found. Run first:  cd app && npm run build:web');
+  console.error('No web build found (app/dist/index.html).');
+  console.error('Run:  cd app  then  npm install  then  npm run build:web');
+  console.error('The build must end with "Exported: dist". If it stops after "Starting Metro Bundler" with no message,');
+  console.error('re-run it with details:  PowerShell: $env:EXPO_DEBUG="1"; npx expo export --platform web --clear');
+  console.error('                         Mac/Linux:  EXPO_DEBUG=1 npx expo export --platform web --clear');
   process.exit(1);
 }
 

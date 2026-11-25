@@ -53,6 +53,7 @@ differs from the last release.
 - Release tags are named `X.Y.Z` without a "v" (e.g. `1.0.0`), matching the published 1.0.0 release; docs updated. (Team, Claude Code, 2026-11-19)
 
 ### Fixed
+- BUG-022: `npm run build:web` could stop silently on Windows right after "Starting Metro Bundler". The app's bundler config no longer watches the repo-root `node_modules` or follows npm workspace links; the app has its own `jpeg-js`. Guard test added and CI now builds the web app. `npm run preview` explains what to do if the build produced nothing. (Team, Claude Code, 2026-11-25)
 - BUG-021: Blue Hills "thumbnails" were full-size photos (Wikimedia returned 1280px, not the assumed 1024px). Data regenerated with 500px thumbnails; regression test added (Ironhide). (Team, Claude Code, 2026-11-24)
 - BUG-020: a hazard's severity could be silently downgraded to "minor" when its reporter later said "not there". Regression test added (Ironhide). (Team, Claude Code, 2026-11-24)
 - BUG-018: `npm run changes` no longer lists Expo build caches (`.expo`, `web-build`) as changes. BUG-019: cutting a release no longer leaves `VERSION` reported as changed. Both have regression tests in `scripts/changes.test.mjs`, now part of `npm run check` and CI. (Team, Claude Code, 2026-11-24)
