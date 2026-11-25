@@ -91,6 +91,9 @@ moderation, duplicate and near-duplicate detection.
 - Nearby search (`POST /trails/nearby`): same place-text rules as above,
   radius limited to 0.5–15 miles, geocoder/Overpass answers validated and
   capped (4,000 elements, 25 results), and rate limited with other writes.
+- Dependencies: the app pins a patched `minimatch` for Expo's build tool
+  (`overrides` in `app/package.json`) instead of downgrading Expo; `npm
+  audit` is clean in all workspaces. Re-check the override when upgrading Expo.
 - CORS (browser version of the app only): explicit origin allow-list
   (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never `*`.
 - Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are

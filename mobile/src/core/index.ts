@@ -14,3 +14,4 @@ export * from './imageFingerprint';
 export * from './tripRequest';
 export * from './tripPlannerDialog';
 export * from './trailDiscovery';
+export * from './appSupport';

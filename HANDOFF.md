@@ -45,7 +45,8 @@ see `AGENTS.md`.
 5. **Plan by voice:** tap 🎤 Speak (browser) or the keyboard's mic (phone)
    and say "I'm about to hike Blue Hills this Saturday, can you plan a trip
    for me?". The app downloads the trail and its photos, switches to that
-   season's photos, and says it's ready to use offline. (Or just open
+   season's photos, and replies in text that it's ready to use offline. Speaking
+   twice adds to the sentence. (Or just open
    **Blue Hills**: it downloads the trail and saves its photos either way.)
    Point out the red **Keep OffGrid open** banner.
    To show the follow-up questions, say something vague ("plan something
@@ -196,6 +197,12 @@ Pick one, put your name on it in the team chat, branch, and open a PR.
 8. **Deploy the API** to Render's free tier for the demo.
 
 ## Known issues and limits
+
+- "Couldn't reach OpenStreetMap": OpenStreetMap's free servers are often
+  busy. OffGrid now tries the main server and two mirrors, and the message
+  says which failed and why (also printed in the `npm run preview`
+  terminal as `[OpenStreetMap] …`). That message is never offline mode;
+  offline mode only changes with the Go offline / Back online button.
 
 - Nearby-trail **difficulty is an estimate** from length and OpenStreetMap's
   own difficulty tags; there's no elevation data yet. Adding elevation

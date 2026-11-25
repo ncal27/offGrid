@@ -51,7 +51,7 @@ trailsRouter.post('/nearby', async (req, res, next) => {
         upstream_error: [502, 'openstreetmap_unavailable'],
       } as const;
       const [status, error] = map[result.reason];
-      res.status(status).json({ error });
+      res.status(status).json({ error, ...('detail' in result && result.detail ? { detail: result.detail } : {}) });
       return;
     }
     res.json({ near: result.near, radiusMiles: result.radiusMiles, results: result.results });
@@ -76,7 +76,7 @@ trailsRouter.post('/import', async (req, res, next) => {
         upstream_error: [502, 'openstreetmap_unavailable'],
       } as const;
       const [status, error] = map[result.reason];
-      res.status(status).json({ error });
+      res.status(status).json({ error, ...('detail' in result && result.detail ? { detail: result.detail } : {}) });
       return;
     }
     const added = addImportedTrail(result.trail);

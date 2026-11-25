@@ -28,6 +28,9 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 | BUG-020 | `hazardReporting.test.ts` ("keeps the reported severity when the reporter later says not there"), shown to fail with the bug reintroduced |
 | BUG-021 | `blueHills.test.ts` ("ships real thumbnails, smaller than the full photo"), shown to fail on the buggy data |
 | BUG-022 | `scripts/appBuildConfig.test.mjs` (bundler config stays narrow), shown to fail on the old config; plus CI now builds the web app |
+| BUG-023 | `mobile/test/integration/appSupport.test.ts` ("adds a second dictation to the first"), shown to fail with the bug reintroduced |
+| BUG-024 | `mobile/test/integration/appSupport.test.ts` ("installs only once"), shown to fail with the bug reintroduced |
+| BUG-025 | `appSupport.test.ts` ("failures say what actually went wrong") and `nearbyTrails.test.ts` ("when OpenStreetMap is busy"), both shown to fail with the bug reintroduced |
 
 ## Review log
 
@@ -43,6 +46,42 @@ a bug? Add its test, tag it `(Ironhide: BUG-NNN)`, and add a row below.
 _None currently._
 
 ## Fixed
+
+### BUG-025 — every planner failure said "I can't reach OpenStreetMap", which looked like being stuck offline
+
+- **Severity:** Medium (confusing during the demo; hid the real cause).
+- **Where:** the planner's error handling in `app/App.tsx`; the single
+  Overpass server in `backend/src/services/osmImportService.ts`.
+- **What happened:** OpenStreetMap's free server being busy (HTTP 429/504),
+  the OffGrid server not running, and OffGrid's own rate limit all showed
+  the same message with no reason, which the project lead reasonably read as
+  "it's in offline mode". There was also only one Overpass server, so one
+  busy server meant failure.
+- **Fix:** Try the main Overpass server then two mirrors; return and log
+  which failed and why; the app gives distinct messages (OpenStreetMap busy
+  with the reason, server not running, too many requests, offline button on).
+- **How it was caught:** The project lead using the planner.
+
+### BUG-024 — the offline guard could wrap itself twice on a live reload
+
+- **Severity:** Low (development only: live reload on phones, not `npm run preview`).
+- **Where:** the fetch guard in `app/App.tsx` (now `installNetworkGuard` in
+  `mobile/src/core/appSupport.ts`).
+- **What happened:** On a live reload the app's code runs again and wrapped
+  the already-wrapped `fetch`; the old layer kept its own offline flag, so
+  the app could stay "offline" with the button showing online.
+- **Fix:** The guard installs once per page and offline only changes via the button.
+- **How it was caught:** Reviewing the offline toggle after BUG-025's report.
+
+### BUG-023 — speaking again replaced what you'd already said
+
+- **Severity:** Low/Medium.
+- **Where:** 🎤 Speak in `app/App.tsx`.
+- **What happened:** Each dictation session overwrote the text box, so
+  pausing mid-sentence and speaking again lost the first half.
+- **Fix:** New dictation is appended (`joinDictation`), without doubling
+  words some speech engines repeat.
+- **How it was caught:** Reported by the project lead.
 
 ### BUG-022 — `npm run build:web` stopped silently on Windows ("Starting Metro Bundler", then nothing)
 

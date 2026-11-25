@@ -26,8 +26,19 @@ export type BBox = typeof IMPORT_BBOX;
 /** Largest area a town search may cover (degrees per side), so "Massachusetts" can't trigger a state-wide query. */
 export const MAX_SEARCH_SPAN = 0.6;
 const GEOCODER_URL = process.env.OFFGRID_GEOCODER_URL ?? 'https://nominatim.openstreetmap.org/search';
-const OVERPASS_URL = process.env.OFFGRID_OVERPASS_URL ?? 'https://overpass-api.de/api/interpreter';
-const REQUEST_TIMEOUT_MS = 25_000;
+/**
+ * OpenStreetMap's free Overpass servers are often busy (HTTP 429/504) or slow,
+ * so try the main one, then public mirrors (BUG-025: one busy server used to
+ * mean "can't reach OpenStreetMap" with no reason given).
+ */
+export const OVERPASS_URLS = process.env.OFFGRID_OVERPASS_URL
+  ? [process.env.OFFGRID_OVERPASS_URL]
+  : [
+      'https://overpass-api.de/api/interpreter',
+      'https://overpass.kumi.systems/api/interpreter',
+      'https://overpass.private.coffee/api/interpreter',
+    ];
+const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_ELEMENTS = 2_000;
 const MAX_ROUTE_POINTS = 400;
 const JOIN_TOLERANCE_METERS = 15;
@@ -41,16 +52,46 @@ export interface OverpassWay {
 }
 export type OverpassFetcher = (query: string) => Promise<{ elements?: unknown }>;
 
-const defaultFetcher: OverpassFetcher = async (query) => {
-  const res = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    body: new URLSearchParams({ data: query }),
-    headers: { 'User-Agent': 'OffGrid-student-project/1.0' },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`);
-  return (await res.json()) as { elements?: unknown };
+/** An OpenStreetMap service didn't answer usefully; `message` says which server and why. */
+export class UpstreamError extends Error {}
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 };
+const why = (e: unknown) => {
+  const err = e as { name?: string; cause?: { code?: string }; message?: string };
+  if (err?.name === 'TimeoutError' || err?.name === 'AbortError') return 'timed out';
+  return err?.cause?.code ?? err?.message ?? 'failed';
+};
+
+/** Tries each Overpass server in turn; throws UpstreamError listing every failure. */
+export function makeOverpassFetcher(urls: string[], fetchImpl: typeof fetch = fetch, timeoutMs = REQUEST_TIMEOUT_MS): OverpassFetcher {
+  return async (query) => {
+    const failures: string[] = [];
+    for (const url of urls) {
+      try {
+        const res = await fetchImpl(url, {
+          method: 'POST',
+          body: new URLSearchParams({ data: query }),
+          headers: { 'User-Agent': 'OffGrid-student-project/1.0' },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (res.ok) return (await res.json()) as { elements?: unknown };
+        failures.push(`${hostOf(url)}: HTTP ${res.status}${res.status === 429 ? ' (busy)' : res.status >= 500 ? ' (server error)' : ''}`);
+      } catch (e) {
+        failures.push(`${hostOf(url)}: ${why(e)}`);
+      }
+      console.warn(`[OpenStreetMap] ${failures[failures.length - 1]}`);
+    }
+    throw new UpstreamError(failures.join('; '));
+  };
+}
+
+const defaultFetcher: OverpassFetcher = makeOverpassFetcher(OVERPASS_URLS);
 let fetcher: OverpassFetcher = defaultFetcher;
 
 /** Test-only: replace the network call with canned Overpass responses. */
@@ -67,8 +108,19 @@ export function _setOverpassFetcherForTests(f: OverpassFetcher | null): void {
 export type Geocoder = (place: string) => Promise<unknown>;
 const defaultGeocoder: Geocoder = async (place) => {
   const url = `${GEOCODER_URL}?${new URLSearchParams({ q: place, format: 'jsonv2', limit: '1', countrycodes: 'us' })}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'OffGrid-student-project/1.0' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-  if (!res.ok) throw new Error(`Geocoder HTTP ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { 'User-Agent': 'OffGrid-student-project/1.0' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (e) {
+    const msg = `${hostOf(GEOCODER_URL)}: ${why(e)}`;
+    console.warn(`[OpenStreetMap] ${msg}`);
+    throw new UpstreamError(msg);
+  }
+  if (!res.ok) {
+    const msg = `${hostOf(GEOCODER_URL)}: HTTP ${res.status}`;
+    console.warn(`[OpenStreetMap] ${msg}`);
+    throw new UpstreamError(msg);
+  }
   return res.json();
 };
 let geocoder: Geocoder = defaultGeocoder;
@@ -253,7 +305,10 @@ export function trailFromOverpass(
 
 export type ImportResult =
   | { ok: true; trail: Trail }
-  | { ok: false; reason: 'invalid_query' | 'invalid_near' | 'place_not_found' | 'not_found' | 'upstream_error' };
+  | { ok: false; reason: 'invalid_query' | 'invalid_near' | 'place_not_found' | 'not_found' | 'upstream_error'; detail?: string };
+
+/** Short, safe-to-show reason for an upstream failure. */
+export const upstreamDetail = (e: unknown) => (e instanceof UpstreamError ? e.message.slice(0, 200) : 'no answer');
 
 /**
  * Imports a trail by name, around Wellesley by default, or around a town the
@@ -270,8 +325,8 @@ export async function importTrailByName(rawQuery: unknown, rawNear?: unknown): P
     let found: BBox | null;
     try {
       found = areaFromGeocode(await geocoder(near));
-    } catch {
-      return { ok: false, reason: 'upstream_error' };
+    } catch (e) {
+      return { ok: false, reason: 'upstream_error', detail: upstreamDetail(e) };
     }
     if (!found) return { ok: false, reason: 'place_not_found' };
     area = found;
@@ -281,8 +336,8 @@ export async function importTrailByName(rawQuery: unknown, rawNear?: unknown): P
   let response: { elements?: unknown };
   try {
     response = await fetcher(buildOverpassQuery(query, area));
-  } catch {
-    return { ok: false, reason: 'upstream_error' };
+  } catch (e) {
+    return { ok: false, reason: 'upstream_error', detail: upstreamDetail(e) };
   }
   const trail = trailFromOverpass(query, response ?? {}, area, region);
   return trail ? { ok: true, trail } : { ok: false, reason: 'not_found' };

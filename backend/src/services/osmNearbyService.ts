@@ -1,6 +1,6 @@
 import { isSafeText, isValidLatLng, LatLng, NearbyTrail, TrailDifficulty } from '@offgrid/shared';
 import { haversineDistanceMeters } from '../geo';
-import { runGeocoder, runOverpass, sanitizeNear, stitchWays } from './osmImportService';
+import { runGeocoder, runOverpass, sanitizeNear, stitchWays, upstreamDetail } from './osmImportService';
 
 /**
  * "Hiking places near <town>": named trails within a radius, with length,
@@ -95,7 +95,7 @@ export function trailsFromOverpass(response: { elements?: unknown }, centre: Lat
 
 export type NearbyResult =
   | { ok: true; near: string; radiusMiles: number; results: NearbyTrail[] }
-  | { ok: false; reason: 'invalid_near' | 'invalid_radius' | 'place_not_found' | 'upstream_error' };
+  | { ok: false; reason: 'invalid_near' | 'invalid_radius' | 'place_not_found' | 'upstream_error'; detail?: string };
 
 export async function findNearbyTrails(rawNear: unknown, rawRadius: unknown): Promise<NearbyResult> {
   const near = sanitizeNear(rawNear);
@@ -105,8 +105,8 @@ export async function findNearbyTrails(rawNear: unknown, rawRadius: unknown): Pr
   let centre: LatLng | null;
   try {
     centre = centreFromGeocode(await runGeocoder(near));
-  } catch {
-    return { ok: false, reason: 'upstream_error' };
+  } catch (e) {
+    return { ok: false, reason: 'upstream_error', detail: upstreamDetail(e) };
   }
   if (!centre) return { ok: false, reason: 'place_not_found' };
   const radiusMeters = Math.round(radiusMiles * METERS_PER_MILE);
@@ -116,8 +116,8 @@ export async function findNearbyTrails(rawNear: unknown, rawRadius: unknown): Pr
   let response: { elements?: unknown };
   try {
     response = await runOverpass(query);
-  } catch {
-    return { ok: false, reason: 'upstream_error' };
+  } catch (e) {
+    return { ok: false, reason: 'upstream_error', detail: upstreamDetail(e) };
   }
   return { ok: true, near, radiusMiles, results: trailsFromOverpass(response ?? {}, centre, radiusMeters) };
 }

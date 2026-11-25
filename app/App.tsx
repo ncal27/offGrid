@@ -1,6 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
-import * as Speech from 'expo-speech';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
@@ -36,6 +35,7 @@ import type {
 import { confidenceLevel, decodeJpeg, fingerprint, rankPlaces, ReferenceEmbedding } from '../mobile/src/core/imageFingerprint';
 import { afterSearchNotFound, IDLE, PlannerAction, PlannerState, respond, showResults } from '../mobile/src/core/tripPlannerDialog';
 import { formatMinutes, miles, SortKey } from '../mobile/src/core/trailDiscovery';
+import { ApiError, describeFailure, installNetworkGuard, joinDictation } from '../mobile/src/core/appSupport';
 import type { WhenInfo } from '../mobile/src/core/tripPlannerDialog';
 
 /**
@@ -93,35 +93,15 @@ const TIER_COLOR: Record<HazardReport['confidenceLevel'], string> = {
   high: '#d64545',
 };
 
-class OfflineError extends Error {
-  constructor() {
-    super('No internet (simulated)');
-  }
-}
-
 // ---- The "Go offline" button: a guard around EVERY network request --------------
-// While offline, each fetch the app attempts is blocked here and counted. The
+// While offline, each fetch the app attempts is blocked and counted; the
 // on-screen counter is the demo's proof that nothing reaches the internet.
-// (For the strongest proof on a phone, also switch on airplane mode.)
-const net = { offline: false, blocked: 0, listeners: new Set<() => void>() };
-const realFetch = globalThis.fetch.bind(globalThis);
-globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
-  if (net.offline) {
-    net.blocked++;
-    net.listeners.forEach((l) => l());
-    return Promise.reject(new OfflineError());
-  }
-  return realFetch(...args);
-}) as typeof fetch;
+// Offline changes ONLY when the button is pressed. Logic and tests:
+// mobile/src/core/appSupport.ts. (On a phone, airplane mode is the strongest proof.)
+const net = installNetworkGuard(globalThis as unknown as { fetch: typeof fetch });
 function useBlockedCount() {
   const [n, setN] = useState(net.blocked);
-  useEffect(() => {
-    const l = () => setN(net.blocked);
-    net.listeners.add(l);
-    return () => {
-      net.listeners.delete(l);
-    };
-  }, []);
+  useEffect(() => net.subscribe(() => setN(net.blocked)), []);
   return n;
 }
 
@@ -157,7 +137,11 @@ async function api<T>(_offline: boolean, method: 'GET' | 'POST', path: string, b
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(json?.details?.[0] ?? json?.error ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new ApiError(res.status, json?.error ?? `http_${res.status}`, json?.detail);
+    if (json?.details?.[0]) err.message = json.details[0]; // validation reason, for display
+    throw err;
+  }
   return json as T;
 }
 
@@ -778,7 +762,7 @@ export default function App() {
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof OfflineError ? 'You are offline. Turn off "Simulate no internet" to do this.' : e instanceof Error ? e.message : String(e));
+      setError(e instanceof ApiError ? (e.message !== e.code ? e.message : describeFailure(e)) : describeFailure(e));
     } finally {
       setBusy(false);
     }
@@ -845,28 +829,15 @@ export default function App() {
       setOpenTrailId(trailId);
     });
 
-  /** Shows and speaks the planner's answer. */
+  /** Shows the planner's final answer (text only; the app doesn't talk back). */
   const reply = (message: string) => {
     setPlanReply(message);
     setStatus('');
-    try {
-      Speech.stop();
-      Speech.speak(message, { language: 'en-US', rate: 1.0 });
-    } catch {
-      // No voice available: the text answer is still shown.
-    }
   };
 
-  /** "Plan by voice": understand the request, fetch/download the trail and its photos, answer. */
-  /** Says something in the planner conversation (shown and spoken). */
+  /** Adds OffGrid's side of the planner conversation (text only). */
   const say = (text: string) => {
     setChat((c) => [...c.slice(-5), { who: 'offgrid', text }]);
-    try {
-      Speech.stop();
-      Speech.speak(text, { language: 'en-US' });
-    } catch {
-      // No voice available: the text is still shown.
-    }
   };
 
   const resetPlanner = () => {
@@ -902,8 +873,8 @@ export default function App() {
       const t = await api<TrailSummary>(offline, 'POST', '/trails/import', { query: trail.name, near });
       setTrails(await api<TrailSummary[]>(offline, 'GET', '/trails/search'));
       await finishPlan(t.id, t.name, when);
-    } catch {
-      say(`Sorry, I couldn't load ${trail.name}. Try another one from the list.`);
+    } catch (e) {
+      say(`Sorry, I couldn't load ${trail.name}. ${describeFailure(e)}`);
     }
   };
 
@@ -954,7 +925,7 @@ export default function App() {
             action = showResults(d, found.results);
           } catch (e) {
             setStatus('');
-            const code = e instanceof Error ? e.message : '';
+            const code = e instanceof ApiError ? e.code : '';
             if (code === 'place_not_found' || code === 'invalid_place') {
               action = {
                 type: 'ask',
@@ -963,7 +934,7 @@ export default function App() {
               };
             } else {
               setPlannerState(IDLE);
-              return say("I can't reach OpenStreetMap right now. Try again in a minute, or pick a trail from the list.");
+              return say(describeFailure(e));
             }
           }
           continue;
@@ -983,7 +954,7 @@ export default function App() {
           setTrails(await api<TrailSummary[]>(offline, 'GET', '/trails/search'));
           return finishPlan(t.id, t.name, search.when);
         } catch (e) {
-          const code = e instanceof Error ? e.message : '';
+          const code = e instanceof ApiError ? e.code : '';
           setStatus('');
           if (code === 'trail_not_found_in_openstreetmap') {
             action = afterSearchNotFound(search);
@@ -997,7 +968,7 @@ export default function App() {
             action = { type: 'ask', question: 'Could you say just the trail or park name?', state: { step: 'need_trail', when: search.when, asked: search.asked + 1 } };
           } else {
             setPlannerState(IDLE);
-            return say("I can't reach OpenStreetMap right now. Try again in a minute, or pick a trail from the list.");
+            return say(describeFailure(e));
           }
         }
       }
@@ -1008,8 +979,10 @@ export default function App() {
     const r = new BrowserSpeechRecognition();
     r.lang = 'en-US';
     r.interimResults = true;
+    // Speaking again ADDS to what's already in the box (BUG-023: it used to replace it).
+    const before = planText;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    r.onresult = (e: any) => setPlanText(Array.from(e.results).map((x: any) => x[0].transcript).join(' '));
+    r.onresult = (e: any) => setPlanText(joinDictation(before, Array.from(e.results).map((x: any) => x[0].transcript).join(' ')));
     r.onend = () => setListening(false);
     r.onerror = () => setListening(false);
     setListening(true);
@@ -1093,8 +1066,7 @@ export default function App() {
   };
 
   const goOffline = () => {
-    net.offline = true;
-    net.blocked = 0;
+    net.setOffline(true);
     setOffline(true);
     setStatus('Offline: the app can no longer reach the internet. Everything below runs from this device.');
   };
@@ -1125,7 +1097,7 @@ export default function App() {
 
   /** Back online: send everything queued, in order; stop at the first failure and keep the rest. */
   const goOnline = () => {
-    net.offline = false;
+    net.setOffline(false);
     setOffline(false);
     if (queue.length === 0) return;
     run(async () => {
@@ -1226,7 +1198,6 @@ export default function App() {
           <View style={styles.replyBox}>
             <Text style={styles.body}>{planReply}</Text>
             <View style={styles.row}>
-              <Button title="Read aloud again" kind="secondary" onPress={() => reply(planReply)} />
               <Button title="Dismiss" kind="secondary" onPress={() => setPlanReply('')} />
             </View>
           </View>

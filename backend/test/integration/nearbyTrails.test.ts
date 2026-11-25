@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { createApp } from '../../src/app';
-import { _setGeocoderForTests, _setOverpassFetcherForTests } from '../../src/services/osmImportService';
+import { _setGeocoderForTests, _setOverpassFetcherForTests, makeOverpassFetcher, UpstreamError } from '../../src/services/osmImportService';
 import { estimateDifficulty, estimateMinutes, MAX_RADIUS_MILES } from '../../src/services/osmNearbyService';
 
 /**
@@ -100,5 +100,51 @@ describe('Use case: hiking places near a town, with distance, time and difficult
     const res = await nearby({ near: 'Needham, MA' });
     expect(res.status).toBe(502);
     expect(res.body.error).toBe('openstreetmap_unavailable');
+  });
+
+  describe('when OpenStreetMap is busy (Ironhide: BUG-025)', () => {
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+    afterEach(() => warn.mockRestore());
+
+    it('falls back to a mirror when the main server is busy', async () => {
+      const hit: string[] = [];
+      const fake = (async (url: string) => {
+        hit.push(new URL(url).host);
+        return hit.length === 1 ? new Response('busy', { status: 429 }) : new Response(JSON.stringify({ elements: ['ok'] }));
+      }) as unknown as typeof fetch;
+      const res = await makeOverpassFetcher(['https://overpass-api.de/x', 'https://overpass.kumi.systems/x'], fake)('q');
+      expect(res.elements).toEqual(['ok']);
+      expect(hit).toEqual(['overpass-api.de', 'overpass.kumi.systems']);
+    });
+
+    it('says which servers failed and why when none answer', async () => {
+      const fake = (async (url: string) => {
+        if (url.includes('kumi')) throw Object.assign(new Error('t'), { name: 'TimeoutError' });
+        if (url.includes('coffee')) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } });
+        return new Response('', { status: 504 });
+      }) as unknown as typeof fetch;
+      const fetcher = makeOverpassFetcher(
+        ['https://overpass-api.de/x', 'https://overpass.kumi.systems/x', 'https://overpass.private.coffee/x'],
+        fake,
+      );
+      await expect(fetcher('q')).rejects.toThrow(
+        'overpass-api.de: HTTP 504 (server error); overpass.kumi.systems: timed out; overpass.private.coffee: ENOTFOUND',
+      );
+      expect(warn).toHaveBeenCalledTimes(3); // also printed in the server's terminal
+    });
+
+    it("passes the reason back to the app, so it isn't mistaken for offline mode", async () => {
+      _setOverpassFetcherForTests(async () => {
+        throw new UpstreamError('overpass-api.de: HTTP 429 (busy)');
+      });
+      const res = await nearby({ near: 'Needham, MA' });
+      expect(res.status).toBe(502);
+      expect(res.body).toEqual({ error: 'openstreetmap_unavailable', detail: 'overpass-api.de: HTTP 429 (busy)' });
+      const imp = await request(app).post('/trails/import').send({ query: 'Rocky Ledges' });
+      expect(imp.body.detail).toBe('overpass-api.de: HTTP 429 (busy)');
+    });
   });
 });
