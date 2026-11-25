@@ -51,6 +51,9 @@ see `AGENTS.md`.
    To show the follow-up questions, say something vague ("plan something
    nice for Sunday"): OffGrid asks which trail, and if it can't find it near
    Wellesley, what town and state it's in ("It's in Canton, Massachusetts").
+   Or ask **"I'm looking for a hiking place near Needham"**: OffGrid lists the
+   trails within 5 miles with length, time and difficulty. Tap **Hardest** /
+   **Longest** / **Quickest** (or say it), then "number 2" or **Plan this**.
 6. Press **Go offline** (top). The banner shows "Internet requests blocked:
    N · sent: 0". For the strongest proof on a phone, also switch on airplane
    mode. Only downloaded trails are listed; the map and photos still work.
@@ -176,6 +179,15 @@ Pick one, put your name on it in the team chat, branch, and open a PR.
 8. **Deploy the API** to Render's free tier for the demo.
 
 ## Known issues and limits
+
+- Nearby-trail **difficulty is an estimate** from length and OpenStreetMap's
+  own difficulty tags; there's no elevation data yet. Adding elevation
+  (e.g. a free elevation API or USGS 3DEP) would make it much more accurate.
+  Times assume about 2 mph, slower for harder trails.
+- The nearby search was tested here with stand-ins for OpenStreetMap
+  (unreachable from the Claude session). **Try "hiking places near Needham"
+  on a laptop** before the demo; real results include whatever named paths
+  are mapped, so some may be short town paths.
 
 - The planner's town lookup uses OpenStreetMap's Nominatim geocoder. It was
   tested here with stand-in services only (the Claude session can't reach

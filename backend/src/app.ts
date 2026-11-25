@@ -80,7 +80,7 @@ export function createApp(options: AppOptions = {}) {
       legacyHeaders: false,
       message: { error: 'rate_limited' },
     });
-    app.use(['/contributions', '/hazards', '/trails/import'], (req, res, next) =>
+    app.use(['/contributions', '/hazards', '/trails/import', '/trails/nearby'], (req, res, next) =>
       req.method === 'GET' ? next() : limiter(req, res, next),
     );
   }

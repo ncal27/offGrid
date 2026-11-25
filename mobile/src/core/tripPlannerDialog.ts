@@ -1,5 +1,6 @@
-import { Season } from '@offgrid/shared';
+import { NearbyTrail, Season } from '@offgrid/shared';
 import { KnownTrail, parseTripRequest } from './tripRequest';
+import { describeResults, parseChoice, parseDiscovery, parseSort, SortKey, sortTrails } from './trailDiscovery';
 
 /**
  * The "Plan a trip" conversation. When OffGrid can't tell or can't find the
@@ -24,14 +25,24 @@ export type PlannerState =
   | { step: 'idle' }
   | { step: 'need_trail'; when: WhenInfo; asked: number }
   | { step: 'need_town'; name: string; when: WhenInfo; asked: number }
-  | { step: 'need_detail'; name: string; near: string; when: WhenInfo; asked: number };
+  | { step: 'need_detail'; name: string; near: string; when: WhenInfo; asked: number }
+  /** "Hiking places near …" without a town (e.g. "near me"): ask which town. */
+  | { step: 'need_area'; radiusMiles: number; sort: SortKey; when: WhenInfo; asked: number }
+  /** Showing nearby results: the hiker can re-sort or pick one. */
+  | { step: 'choosing'; near: string; radiusMiles: number; sort: SortKey; results: NearbyTrail[]; when: WhenInfo };
 
 export type PlannerAction =
   | { type: 'open'; trailId: string; when: WhenInfo }
   /** Look the trail up on OpenStreetMap; then call afterSearchNotFound(...) if it isn't there. */
   | { type: 'search'; name: string; near: string | null; when: WhenInfo; asked: number }
   | { type: 'ask'; question: string; state: PlannerState }
-  | { type: 'give_up'; message: string };
+  | { type: 'give_up'; message: string }
+  /** Find named trails within `radiusMiles` of `near`; then call showResults(...). */
+  | { type: 'discover'; near: string; radiusMiles: number; sort: SortKey; when: WhenInfo }
+  /** Results re-sorted (or shown for the first time): display `state.results` and say `message`. */
+  | { type: 'show'; message: string; state: Extract<PlannerState, { step: 'choosing' }> }
+  /** The hiker chose a nearby trail: import it near the town and plan it. */
+  | { type: 'pick'; trail: NearbyTrail; near: string; when: WhenInfo };
 
 export const IDLE: PlannerState = { step: 'idle' };
 
@@ -108,9 +119,60 @@ function askOrGiveUp(asked: number, question: string, state: PlannerState): Plan
   return { type: 'ask', question, state };
 }
 
+/** After a nearby search: show the results (sorted) and describe them. */
+export function showResults(
+  discover: Extract<PlannerAction, { type: 'discover' }>,
+  results: NearbyTrail[],
+): Extract<PlannerAction, { type: 'show' }> {
+  const sorted = sortTrails(results, discover.sort);
+  return {
+    type: 'show',
+    message: describeResults(sorted, discover.near, discover.radiusMiles, discover.sort),
+    state: { step: 'choosing', near: discover.near, radiusMiles: discover.radiusMiles, sort: discover.sort, results: sorted, when: discover.when },
+  };
+}
+
 /** What to do with the hiker's latest message, given what OffGrid last asked. */
 export function respond(state: PlannerState, text: string, trails: KnownTrail[], now: Date = new Date()): PlannerAction {
   const req = parseTripRequest(text, trails, now);
+
+  if (state.step === 'choosing') {
+    const when = mergeWhen(state.when, whenOf(req));
+    const again = parseDiscovery(text);
+    if (again?.near && again.near !== state.near) {
+      return { type: 'discover', near: again.near, radiusMiles: again.radiusMiles, sort: again.sort, when };
+    }
+    const choice = parseChoice(text, state.results);
+    if (choice !== null) return { type: 'pick', trail: state.results[choice], near: state.near, when };
+    const sort = parseSort(text);
+    if (sort) return showResults({ type: 'discover', near: state.near, radiusMiles: state.radiusMiles, sort, when }, state.results);
+    // Not about the list: treat it as a fresh request.
+    return respond(IDLE, text, trails, now);
+  }
+
+  if (state.step === 'need_area') {
+    const when = mergeWhen(state.when, whenOf(req));
+    const near = parsePlace(text);
+    if (near) return { type: 'discover', near, radiusMiles: state.radiusMiles, sort: parseSort(text) ?? state.sort, when };
+    return askOrGiveUp(state.asked, 'Which town should I search near? For example, "Needham" or "Wellesley, MA".', {
+      ...state,
+      when,
+      asked: state.asked + 1,
+    });
+  }
+
+  if (state.step === 'idle' && !req.trailId) {
+    const disc = parseDiscovery(text);
+    if (disc) {
+      const when = whenOf(req);
+      if (disc.near) return { type: 'discover', near: disc.near, radiusMiles: disc.radiusMiles, sort: disc.sort, when };
+      return {
+        type: 'ask',
+        question: `Which town should I search near? For example, "Needham" or "Wellesley, MA". (I can't use your location yet.)`,
+        state: { step: 'need_area', radiusMiles: disc.radiusMiles, sort: disc.sort, when, asked: 1 },
+      };
+    }
+  }
 
   if (state.step === 'idle' || state.step === 'need_trail') {
     const when = state.step === 'idle' ? whenOf(req) : mergeWhen(state.when, whenOf(req));

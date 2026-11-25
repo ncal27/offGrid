@@ -27,13 +27,15 @@ import type {
   LandmarkPhoto,
   LatLng,
   Season,
+  NearbyTrail,
   TrailSummary,
   TripPackage,
   Waypoint,
 } from '../packages/shared/src/types';
 // Shared, platform-agnostic offline photo matching (resolved via metro.config.js).
 import { confidenceLevel, decodeJpeg, fingerprint, rankPlaces, ReferenceEmbedding } from '../mobile/src/core/imageFingerprint';
-import { afterSearchNotFound, IDLE, PlannerAction, PlannerState, respond } from '../mobile/src/core/tripPlannerDialog';
+import { afterSearchNotFound, IDLE, PlannerAction, PlannerState, respond, showResults } from '../mobile/src/core/tripPlannerDialog';
+import { formatMinutes, miles, SortKey } from '../mobile/src/core/trailDiscovery';
 import type { WhenInfo } from '../mobile/src/core/tripPlannerDialog';
 
 /**
@@ -893,6 +895,26 @@ export default function App() {
     );
   };
 
+  /** A trail chosen from "hiking places near …": import it near that town, then plan it. */
+  const planNearby = async (trail: NearbyTrail, near: string, when: WhenInfo) => {
+    setChat((c) => [...c.slice(-5), { who: 'offgrid', text: `Planning ${trail.name}…` }]);
+    try {
+      const t = await api<TrailSummary>(offline, 'POST', '/trails/import', { query: trail.name, near });
+      setTrails(await api<TrailSummary[]>(offline, 'GET', '/trails/search'));
+      await finishPlan(t.id, t.name, when);
+    } catch {
+      say(`Sorry, I couldn't load ${trail.name}. Try another one from the list.`);
+    }
+  };
+
+  /** Sort buttons on the nearby results (same as saying "longest", "hardest", …). */
+  const resort = (sort: SortKey) => {
+    if (plannerState.step !== 'choosing') return;
+    const st = plannerState;
+    const a = showResults({ type: 'discover', near: st.near, radiusMiles: st.radiusMiles, sort, when: st.when }, st.results);
+    setPlannerState(a.state);
+  };
+
   /**
    * "Plan by voice" as a short conversation (rules in mobile/src/core/tripPlannerDialog.ts):
    * if the place is unclear or not found, OffGrid asks which trail, then what
@@ -915,6 +937,36 @@ export default function App() {
         if (action.type === 'give_up') {
           setPlannerState(IDLE);
           return say(action.message);
+        }
+        if (action.type === 'show') {
+          setPlannerState(action.state);
+          return say(action.message);
+        }
+        if (action.type === 'pick') {
+          return planNearby(action.trail, action.near, action.when);
+        }
+        if (action.type === 'discover') {
+          const d: Extract<PlannerAction, { type: 'discover' }> = action;
+          setStatus(`Looking for trails within ${d.radiusMiles} miles of ${d.near}…`);
+          try {
+            const found = await api<{ results: NearbyTrail[] }>(offline, 'POST', '/trails/nearby', { near: d.near, radiusMiles: d.radiusMiles });
+            setStatus('');
+            action = showResults(d, found.results);
+          } catch (e) {
+            setStatus('');
+            const code = e instanceof Error ? e.message : '';
+            if (code === 'place_not_found' || code === 'invalid_place') {
+              action = {
+                type: 'ask',
+                question: `I couldn't find "${d.near}". Which town should I search near? For example, "Needham, MA".`,
+                state: { step: 'need_area', radiusMiles: d.radiusMiles, sort: d.sort, when: d.when, asked: 2 },
+              };
+            } else {
+              setPlannerState(IDLE);
+              return say("I can't reach OpenStreetMap right now. Try again in a minute, or pick a trail from the list.");
+            }
+          }
+          continue;
         }
         if (action.type === 'open') {
           const trailId = action.trailId;
@@ -1185,7 +1237,7 @@ export default function App() {
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Plan a trip</Text>
               <Text style={styles.meta}>
-                Say or type where and when, e.g. "I'm hiking Blue Hills this Saturday, plan a trip for me."
+                Say or type where and when, e.g. "I'm hiking Blue Hills this Saturday, plan a trip for me", or ask "I'm looking for a hiking place near Needham".
                 {BrowserSpeechRecognition ? '' : " On a phone, tap the box and use your keyboard's microphone to speak."}
               </Text>
               {chat.length > 0 && (
@@ -1200,11 +1252,60 @@ export default function App() {
                   ))}
                 </View>
               )}
+              {plannerState.step === 'choosing' && (
+                <View style={{ gap: 8 }}>
+                  <Text style={styles.label}>
+                    {plannerState.results.length} trails within {plannerState.radiusMiles} mi of {plannerState.near}
+                  </Text>
+                  <View style={styles.wrap}>
+                    {(['closest', 'longest', 'shortest', 'easiest', 'hardest', 'quickest'] as SortKey[]).map((k) => (
+                      <Button
+                        key={k}
+                        title={k[0].toUpperCase() + k.slice(1)}
+                        kind={plannerState.step === 'choosing' && plannerState.sort === k ? 'selected' : 'secondary'}
+                        onPress={() => resort(k)}
+                      />
+                    ))}
+                  </View>
+                  {plannerState.results.map((t, i) => (
+                    <View key={t.name} style={styles.resultRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.trailName}>
+                          {i + 1}. {t.name}
+                        </Text>
+                        <Text style={styles.meta}>
+                          {miles(t.lengthMeters)} mi · ~{formatMinutes(t.estimatedMinutes)} · {miles(t.distanceFromCenterMeters)} mi away
+                        </Text>
+                        <Text style={[styles.diffBadge, styles[`diff_${t.difficulty}`]]}>{t.difficulty} (est.)</Text>
+                      </View>
+                      <Button
+                        title="Plan this"
+                        onPress={() => {
+                          if (plannerState.step === 'choosing') {
+                            const near = plannerState.near;
+                            const when = plannerState.when;
+                            run(() => planNearby(t, near, when));
+                          }
+                        }}
+                      />
+                    </View>
+                  ))}
+                  <Text style={styles.meta}>
+                    Difficulty is estimated from length and OpenStreetMap trail tags (no elevation data yet). Time assumes about 2 mph.
+                  </Text>
+                </View>
+              )}
               <TextInput
                 accessibilityLabel="Trip request"
                 value={planText}
                 onChangeText={setPlanText}
-                placeholder={plannerState.step === 'idle' ? 'Where and when are you hiking?' : 'Your answer…'}
+                placeholder={
+                  plannerState.step === 'idle'
+                    ? 'Where and when? Or "hiking places near Needham"'
+                    : plannerState.step === 'choosing'
+                      ? 'Say "hardest", "number 2", a name…'
+                      : 'Your answer…'
+                }
                 multiline
                 maxLength={300}
                 style={[styles.input, { minHeight: 64 }]}
@@ -1407,6 +1508,11 @@ const styles = StyleSheet.create({
   keepOpenTitle: { fontSize: 15, fontWeight: '800', color: '#8c1d18' },
   keepOpenText: { fontSize: 13, color: '#5c1a16', marginTop: 2 },
   chat: { gap: 6 },
+  resultRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: '#d5ded7' },
+  diffBadge: { alignSelf: 'flex-start', fontSize: 12, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, marginTop: 2, overflow: 'hidden' },
+  diff_easy: { backgroundColor: '#dcefe1', color: '#1e6b3a' },
+  diff_moderate: { backgroundColor: '#fdf0d5', color: '#8a5a00' },
+  diff_hard: { backgroundColor: '#fde3e1', color: '#8c1d18' },
   bubble: { padding: 10, borderRadius: 12, maxWidth: '92%' },
   bubbleYou: { alignSelf: 'flex-end', backgroundColor: '#dfe9f7' },
   bubbleOffgrid: { alignSelf: 'flex-start', backgroundColor: '#e3f0e6' },

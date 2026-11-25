@@ -285,3 +285,22 @@ export interface ContributionAck {
   status: PhotoStatus;
   message: string;
 }
+
+export type TrailDifficulty = 'easy' | 'moderate' | 'hard';
+
+/** A trail found by "hiking places near <town>" (not downloaded yet; plan it to import and download). */
+export interface NearbyTrail {
+  name: string;
+  lengthMeters: number;
+  /** From the town's centre to the nearest point of the trail. */
+  distanceFromCenterMeters: number;
+  /**
+   * ESTIMATED from length plus OpenStreetMap difficulty tags (sac_scale,
+   * rocky surfaces, steps) when present. No elevation data yet.
+   */
+  difficulty: TrailDifficulty;
+  difficultyScore: number;
+  /** Estimated hiking time in minutes (~2 mph, slower for harder trails). */
+  estimatedMinutes: number;
+  center: LatLng;
+}

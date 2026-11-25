@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { isSafeId } from '@offgrid/shared';
 import { addImportedTrail, getTrailById, getTrailVersion, searchTrails } from '../services/trailService';
 import { importTrailByName } from '../services/osmImportService';
+import { findNearbyTrails } from '../services/osmNearbyService';
 import { buildTripPackage } from '../services/packageService';
 
 export const trailsRouter = Router();
@@ -33,6 +34,30 @@ trailsRouter.get('/search', (req, res) => {
     typeof region === 'string' ? region : undefined,
   );
   res.json(results);
+});
+
+/**
+ * "Hiking places near <town>": named trails within a radius, with length,
+ * distance, estimated difficulty and time. Rate limited with other writes.
+ */
+trailsRouter.post('/nearby', async (req, res, next) => {
+  try {
+    const result = await findNearbyTrails(req.body?.near, req.body?.radiusMiles);
+    if (!result.ok) {
+      const map = {
+        invalid_near: [400, 'invalid_place'],
+        invalid_radius: [400, 'invalid_radius'],
+        place_not_found: [404, 'place_not_found'],
+        upstream_error: [502, 'openstreetmap_unavailable'],
+      } as const;
+      const [status, error] = map[result.reason];
+      res.status(status).json({ error });
+      return;
+    }
+    res.json({ near: result.near, radiusMiles: result.radiusMiles, results: result.results });
+  } catch (err) {
+    next(err);
+  }
 });
 
 /**

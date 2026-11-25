@@ -287,3 +287,7 @@ export async function importTrailByName(rawQuery: unknown, rawNear?: unknown): P
   const trail = trailFromOverpass(query, response ?? {}, area, region);
   return trail ? { ok: true, trail } : { ok: false, reason: 'not_found' };
 }
+
+/** Shared with osmNearbyService: the (test-replaceable) geocoder and Overpass calls. */
+export const runGeocoder = (place: string): Promise<unknown> => geocoder(place);
+export const runOverpass = (query: string): Promise<{ elements?: unknown }> => fetcher(query);

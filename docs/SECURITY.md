@@ -88,6 +88,9 @@ moderation, duplicate and near-duplicate detection.
   "Town, ST"-style text is accepted, the geocoder's answer must be a valid
   bounding box, and the search area is capped (0.6° per side) whatever the
   geocoder returns.
+- Nearby search (`POST /trails/nearby`): same place-text rules as above,
+  radius limited to 0.5–15 miles, geocoder/Overpass answers validated and
+  capped (4,000 elements, 25 results), and rate limited with other writes.
 - CORS (browser version of the app only): explicit origin allow-list
   (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never `*`.
 - Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are
