@@ -41,10 +41,12 @@ trailsRouter.get('/search', (req, res) => {
  */
 trailsRouter.post('/import', async (req, res, next) => {
   try {
-    const result = await importTrailByName(req.body?.query);
+    const result = await importTrailByName(req.body?.query, req.body?.near);
     if (!result.ok) {
       const map = {
         invalid_query: [400, 'invalid_trail_query'],
+        invalid_near: [400, 'invalid_place'],
+        place_not_found: [404, 'place_not_found'],
         not_found: [404, 'trail_not_found_in_openstreetmap'],
         upstream_error: [502, 'openstreetmap_unavailable'],
       } as const;

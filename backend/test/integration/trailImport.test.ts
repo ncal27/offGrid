@@ -3,8 +3,10 @@ import { createApp } from '../../src/app';
 import { _resetForTests as resetTrails, MAX_IMPORTED_TRAILS } from '../../src/services/trailService';
 import { _resetForTests as resetHazards } from '../../src/services/hazardService';
 import {
+  _setGeocoderForTests,
   _setOverpassFetcherForTests,
   buildOverpassQuery,
+  MAX_SEARCH_SPAN,
   IMPORT_BBOX,
   OverpassWay,
   stitchWays,
@@ -48,7 +50,10 @@ describe('Use case: add a trail the class shouts out, live from OpenStreetMap', 
       return ROCKY_LEDGES;
     });
   });
-  afterAll(() => _setOverpassFetcherForTests(null));
+  afterAll(() => {
+    _setOverpassFetcherForTests(null);
+    _setGeocoderForTests(null);
+  });
 
   const importTrail = (query: unknown) => request(app).post('/trails/import').send({ query });
 
@@ -142,5 +147,60 @@ describe('Use case: add a trail the class shouts out, live from OpenStreetMap', 
     const b = [{ lat: 0, lng: 0.002 }, { lat: 0, lng: 0.001 }]; // reversed
     const c = [{ lat: 0, lng: -0.001 }, { lat: 0, lng: 0 }];
     expect(stitchWays([a, b, c]).map((p) => p.lng)).toEqual([-0.001, 0, 0.001, 0.002]);
+  });
+
+  describe('follow-up: "What town and state is it in?"', () => {
+    // Canton, MA roughly; Nominatim returns [south, north, west, east] as strings.
+    const CANTON = [{ boundingbox: ['42.12', '42.21', '-71.20', '-71.06'], lat: '42.158', lon: '-71.145' }];
+    let geocoded: string[];
+    beforeEach(() => {
+      geocoded = [];
+      _setGeocoderForTests(async (place) => {
+        geocoded.push(place);
+        return /canton/i.test(place) ? CANTON : /massachusetts$/i.test(place) ? [{ boundingbox: ['41.2', '42.9', '-73.5', '-69.9'] }] : [];
+      });
+    });
+
+    it('searches around the town the hiker named', async () => {
+      // A trail actually in Canton (the Wellesley sample data would be correctly filtered out).
+      _setOverpassFetcherForTests(async (q) => {
+        calls.push(q);
+        return { elements: [way(9, 'Ponkapoag Pond Trail', [[42.165, -71.11], [42.168, -71.105], [42.17, -71.1]])] };
+      });
+      const res = await request(app).post('/trails/import').send({ query: 'Ponkapoag Pond', near: 'Canton, MA' });
+      expect(res.status).toBe(201);
+      expect(geocoded).toEqual(['Canton, MA']);
+      const bbox = /\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\);out geom/.exec(calls[0])!.slice(1).map(Number);
+      expect(bbox[0]).toBeCloseTo(42.09, 2); // south, minus a ~3 km margin
+      expect(bbox[3]).toBeCloseTo(-71.03, 2); // east, plus the margin
+      expect(res.body.region).toBe('US-MA');
+    });
+
+    it('caps a huge area (a whole state) so the search stays small', async () => {
+      await request(app).post('/trails/import').send({ query: 'Rocky Ledges', near: 'Massachusetts' });
+      const [s, w, n, e] = /\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\);out geom/.exec(calls[0])!.slice(1).map(Number);
+      expect(n - s).toBeLessThanOrEqual(MAX_SEARCH_SPAN + 1e-9);
+      expect(e - w).toBeLessThanOrEqual(MAX_SEARCH_SPAN + 1e-9);
+    });
+
+    it('says when the town itself is not found', async () => {
+      const res = await request(app).post('/trails/import').send({ query: 'Rocky Ledges', near: 'Nowheresville, ZZ' });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('place_not_found');
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses place text that is not a town name, without contacting anything', async () => {
+      for (const near of ['"];out;', '<b>Canton</b>', 'Canton; DROP', 'x'.repeat(80), 42]) {
+        expect((await request(app).post('/trails/import').send({ query: 'Rocky Ledges', near })).status).toBe(400);
+      }
+      expect(geocoded).toHaveLength(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('ignores a geocoder answer with nonsense coordinates', async () => {
+      _setGeocoderForTests(async () => [{ boundingbox: ['999', '1000', 'x', '5'] }]);
+      expect((await request(app).post('/trails/import').send({ query: 'Rocky Ledges', near: 'Canton, MA' })).body.error).toBe('place_not_found');
+    });
   });
 });

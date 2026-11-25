@@ -84,6 +84,10 @@ moderation, duplicate and near-duplicate detection.
   recognition, which sends audio to the browser maker's service (e.g. Google
   for Chrome); it's only available while online. On phones, dictation is the
   keyboard's own feature. The app itself never records or uploads audio.
+- Town search for the planner (`near` on `POST /trails/import`): only short
+  "Town, ST"-style text is accepted, the geocoder's answer must be a valid
+  bounding box, and the search area is capped (0.6° per side) whatever the
+  geocoder returns.
 - CORS (browser version of the app only): explicit origin allow-list
   (`OFFGRID_CORS_ORIGINS`, default `http://localhost:8081`), never `*`.
 - Per-IP rate limit on writes (default 100 per 15 min). Contributor IDs are

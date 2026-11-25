@@ -48,6 +48,9 @@ see `AGENTS.md`.
    season's photos, and says it's ready to use offline. (Or just open
    **Blue Hills**: it downloads the trail and saves its photos either way.)
    Point out the red **Keep OffGrid open** banner.
+   To show the follow-up questions, say something vague ("plan something
+   nice for Sunday"): OffGrid asks which trail, and if it can't find it near
+   Wellesley, what town and state it's in ("It's in Canton, Massachusetts").
 6. Press **Go offline** (top). The banner shows "Internet requests blocked:
    N · sent: 0". For the strongest proof on a phone, also switch on airplane
    mode. Only downloaded trails are listed; the map and photos still work.
@@ -173,6 +176,11 @@ Pick one, put your name on it in the team chat, branch, and open a PR.
 8. **Deploy the API** to Render's free tier for the demo.
 
 ## Known issues and limits
+
+- The planner's town lookup uses OpenStreetMap's Nominatim geocoder. It was
+  tested here with stand-in services only (the Claude session can't reach
+  OpenStreetMap's search servers), so **try a real follow-up on a laptop**
+  before the demo, e.g. "Ponkapoag Pond", then "Canton, Massachusetts".
 
 - Voice planning understands simple requests (a trail name plus today,
   tomorrow, a weekday, "this weekend", "next week" or a month). It's keyword

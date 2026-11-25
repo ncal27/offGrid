@@ -12,3 +12,4 @@ export * from './HazardVoteQueue';
 export * from './hazards';
 export * from './imageFingerprint';
 export * from './tripRequest';
+export * from './tripPlannerDialog';

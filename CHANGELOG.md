@@ -27,6 +27,8 @@ differs from the last release.
 ## [Unreleased]
 
 ### Added
+- "Plan a trip" asks follow-up questions instead of failing: which trail or park (if none was named), what town and state (if it isn't found near Wellesley), then another name or the park it's in; gives up politely after 3 questions and keeps what was said about "when". Rules in `mobile/src/core/tripPlannerDialog.ts` with tests. (Team, Claude Code, 2026-11-25)
+- `POST /trails/import` accepts `near` ("Canton, MA"): the town is looked up with OpenStreetMap's Nominatim geocoder and the trail search runs around it (area capped at 0.6° so a whole state can't be searched). Place text is validated and geocoder results checked; tested with stand-in services. (Team, Claude Code, 2026-11-25)
 - "Plan a trip" by voice or text: e.g. "I'm hiking Blue Hills this Saturday, plan a trip for me". The app finds the trail (or fetches it from OpenStreetMap), downloads it with its photos, switches the photo filter to that date's season, and answers out loud (expo-speech). Browser mic via built-in speech recognition; on phones, the keyboard's dictation. Parser in `mobile/src/core/tripRequest.ts` with tests. (Team, Claude Code, 2026-11-24)
 - "Keep OffGrid open" warning once a trail is downloaded or you're offline (closing the app erases downloads and unsent changes), and a leave-page prompt in browsers. (Team, Claude Code, 2026-11-24)
 - "Go offline" button at the top: every network request the app attempts while offline is blocked and counted, with an on-screen "Internet requests blocked: N · sent: 0" as proof for the demo. (Team, Claude Code, 2026-11-24)

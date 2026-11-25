@@ -33,7 +33,8 @@ import type {
 } from '../packages/shared/src/types';
 // Shared, platform-agnostic offline photo matching (resolved via metro.config.js).
 import { confidenceLevel, decodeJpeg, fingerprint, rankPlaces, ReferenceEmbedding } from '../mobile/src/core/imageFingerprint';
-import { parseTripRequest } from '../mobile/src/core/tripRequest';
+import { afterSearchNotFound, IDLE, PlannerAction, PlannerState, respond } from '../mobile/src/core/tripPlannerDialog';
+import type { WhenInfo } from '../mobile/src/core/tripPlannerDialog';
 
 /**
  * Speech-to-text for "Plan by voice". In browsers that have it (Chrome, Edge,
@@ -756,6 +757,9 @@ export default function App() {
   const [planText, setPlanText] = useState('');
   const [listening, setListening] = useState(false);
   const [planReply, setPlanReply] = useState('');
+  // The planner conversation: what OffGrid last asked, and the recent back-and-forth.
+  const [plannerState, setPlannerState] = useState<PlannerState>(IDLE);
+  const [chat, setChat] = useState<{ who: 'you' | 'offgrid'; text: string }[]>([]);
   const [season, setSeason] = useState<Season | 'all'>('all');
   const [viewerPhoto, setViewerPhoto] = useState<LandmarkPhoto | null>(null);
   const [severity, setSeverity] = useState<HazardSeverity>('moderate');
@@ -852,43 +856,99 @@ export default function App() {
   };
 
   /** "Plan by voice": understand the request, fetch/download the trail and its photos, answer. */
+  /** Says something in the planner conversation (shown and spoken). */
+  const say = (text: string) => {
+    setChat((c) => [...c.slice(-5), { who: 'offgrid', text }]);
+    try {
+      Speech.stop();
+      Speech.speak(text, { language: 'en-US' });
+    } catch {
+      // No voice available: the text is still shown.
+    }
+  };
+
+  const resetPlanner = () => {
+    setPlannerState(IDLE);
+    setChat([]);
+    setPlanText('');
+  };
+
+  /** Downloads the chosen trail and its photos, sets the season, and confirms. */
+  const finishPlan = async (trailId: string, name: string, when: WhenInfo) => {
+    setStatus(`Planning ${name}: downloading the trail and photos…`);
+    const p = await fetchPackage(trailId);
+    setPicked(null);
+    setPlaceId(null);
+    setOpenTrailId(trailId);
+    const n = await saveForOffline(p);
+    if (when.season) setSeason(when.season);
+    setPlannerState(IDLE);
+    setChat([]);
+    reply(
+      `Your trip to ${name}${when.when ? ` for ${when.when}` : ''} is ready to use offline: the map, ` +
+        `${p.trail.waypoints.length} places and ${n} photo${n === 1 ? '' : 's'}` +
+        `${p.hazards.length ? `, plus ${p.hazards.length} reported hazard${p.hazards.length === 1 ? '' : 's'}` : ''}.` +
+        `${when.season && n > 0 ? ` Showing ${when.season} photos.` : ''}` +
+        ' Once you lose signal, keep OffGrid open. Closing it erases the download.',
+    );
+  };
+
+  /**
+   * "Plan by voice" as a short conversation (rules in mobile/src/core/tripPlannerDialog.ts):
+   * if the place is unclear or not found, OffGrid asks which trail, then what
+   * town and state, then for another name or the park it's in.
+   */
   const planTrip = () =>
     run(async () => {
       const text = planText.trim();
       if (!text) return;
-      if (offline) return reply("You're offline. Planning needs signal, so go back online first.");
+      if (offline) return say("You're offline. Planning needs signal, so go back online first.");
+      setChat((c) => [...c.slice(-5), { who: 'you', text }]);
+      setPlanText('');
       const list = trails ?? (await api<TrailSummary[]>(offline, 'GET', '/trails/search'));
-      const req = parseTripRequest(text, list);
-      let trailId = req.trailId;
-      let name = list.find((t) => t.id === trailId)?.name;
-      if (!trailId && req.searchName) {
-        setStatus(`Looking up "${req.searchName}" on OpenStreetMap…`);
+      let action: PlannerAction = respond(plannerState, text, list);
+      for (let step = 0; step < 4; step++) {
+        if (action.type === 'ask') {
+          setPlannerState(action.state);
+          return say(action.question);
+        }
+        if (action.type === 'give_up') {
+          setPlannerState(IDLE);
+          return say(action.message);
+        }
+        if (action.type === 'open') {
+          const trailId = action.trailId;
+          return finishPlan(trailId, list.find((t) => t.id === trailId)?.name ?? 'your trail', action.when);
+        }
+        // search: look it up on OpenStreetMap (near a town if the hiker named one)
+        const search: Extract<PlannerAction, { type: 'search' }> = action;
+        setStatus(`Looking up "${search.name}"${search.near ? ` near ${search.near}` : ''} on OpenStreetMap…`);
         try {
-          const t = await api<TrailSummary>(offline, 'POST', '/trails/import', { query: req.searchName });
-          trailId = t.id;
-          name = t.name;
+          const t = await api<TrailSummary>(offline, 'POST', '/trails/import', {
+            query: search.name,
+            ...(search.near ? { near: search.near } : {}),
+          });
           setTrails(await api<TrailSummary[]>(offline, 'GET', '/trails/search'));
-        } catch {
-          return reply(`I couldn't find "${req.searchName}" on OpenStreetMap. Try the trail's exact name, or a shorter part of it.`);
+          return finishPlan(t.id, t.name, search.when);
+        } catch (e) {
+          const code = e instanceof Error ? e.message : '';
+          setStatus('');
+          if (code === 'trail_not_found_in_openstreetmap') {
+            action = afterSearchNotFound(search);
+          } else if (code === 'place_not_found' || code === 'invalid_place') {
+            action = {
+              type: 'ask',
+              question: `I couldn't find the town "${search.near}". Which town and state is it in? For example, "Canton, Massachusetts".`,
+              state: { step: 'need_town', name: search.name, when: search.when, asked: search.asked + 1 },
+            };
+          } else if (code === 'invalid_trail_query') {
+            action = { type: 'ask', question: 'Could you say just the trail or park name?', state: { step: 'need_trail', when: search.when, asked: search.asked + 1 } };
+          } else {
+            setPlannerState(IDLE);
+            return say("I can't reach OpenStreetMap right now. Try again in a minute, or pick a trail from the list.");
+          }
         }
       }
-      if (!trailId) return reply("I couldn't tell which trail you mean. Try: \"Plan a hike at Blue Hills this Saturday.\"");
-
-      setStatus(`Planning ${name}: downloading the trail and photos…`);
-      const p = await fetchPackage(trailId);
-      setPicked(null);
-      setPlaceId(null);
-      setOpenTrailId(trailId);
-      const n = await saveForOffline(p);
-      if (req.season) setSeason(req.season);
-      setPlanText('');
-      reply(
-        `Your trip to ${name}${req.when ? ` for ${req.when}` : ''} is ready to use offline: the map, ` +
-          `${p.trail.waypoints.length} places and ${n} photo${n === 1 ? '' : 's'}` +
-          `${p.hazards.length ? `, plus ${p.hazards.length} reported hazard${p.hazards.length === 1 ? '' : 's'}` : ''}.` +
-          `${req.season ? ` Showing ${req.season} photos.` : ''}` +
-          ' Once you lose signal, keep OffGrid open. Closing it erases the download.',
-      );
     });
 
   const listen = () => {
@@ -1128,11 +1188,23 @@ export default function App() {
                 Say or type where and when, e.g. "I'm hiking Blue Hills this Saturday, plan a trip for me."
                 {BrowserSpeechRecognition ? '' : " On a phone, tap the box and use your keyboard's microphone to speak."}
               </Text>
+              {chat.length > 0 && (
+                <View style={styles.chat}>
+                  {chat.map((m, i) => (
+                    <View key={i} style={[styles.bubble, m.who === 'you' ? styles.bubbleYou : styles.bubbleOffgrid]}>
+                      <Text style={styles.bubbleText}>
+                        {m.who === 'offgrid' ? 'OffGrid: ' : 'You: '}
+                        {m.text}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
               <TextInput
                 accessibilityLabel="Trip request"
                 value={planText}
                 onChangeText={setPlanText}
-                placeholder="Where and when are you hiking?"
+                placeholder={plannerState.step === 'idle' ? 'Where and when are you hiking?' : 'Your answer…'}
                 multiline
                 maxLength={300}
                 style={[styles.input, { minHeight: 64 }]}
@@ -1142,7 +1214,12 @@ export default function App() {
                 {BrowserSpeechRecognition && (
                   <Button title={listening ? 'Listening…' : '🎤 Speak'} kind="secondary" onPress={listen} disabled={offline || listening} />
                 )}
-                <Button title="Plan it" onPress={planTrip} disabled={offline || busy || planText.trim().length < 3} />
+                <Button
+                  title={plannerState.step === 'idle' ? 'Plan it' : 'Answer'}
+                  onPress={planTrip}
+                  disabled={offline || busy || planText.trim().length < 2}
+                />
+                {chat.length > 0 && <Button title="Start over" kind="secondary" onPress={resetPlanner} />}
               </View>
             </View>
 
@@ -1329,6 +1406,11 @@ const styles = StyleSheet.create({
   keepOpen: { marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: '#fde3e1', borderWidth: 1, borderColor: '#e0a19b' },
   keepOpenTitle: { fontSize: 15, fontWeight: '800', color: '#8c1d18' },
   keepOpenText: { fontSize: 13, color: '#5c1a16', marginTop: 2 },
+  chat: { gap: 6 },
+  bubble: { padding: 10, borderRadius: 12, maxWidth: '92%' },
+  bubbleYou: { alignSelf: 'flex-end', backgroundColor: '#dfe9f7' },
+  bubbleOffgrid: { alignSelf: 'flex-start', backgroundColor: '#e3f0e6' },
+  bubbleText: { fontSize: 14, color: '#1b3a2a' },
   replyBox: { marginHorizontal: 16, marginTop: 12, padding: 14, borderRadius: 14, backgroundColor: '#e3f0e6', borderWidth: 1, borderColor: '#9cc8a8', gap: 8 },
   offlineBtn: { backgroundColor: '#1b3a2a', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
   offlineBtnOn: { backgroundColor: '#2e7d4f' },
